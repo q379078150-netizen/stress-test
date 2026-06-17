@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>渠道压测 — 连续对话 + Cache</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; background: #0d1117; color: #c9d1d9; padding: 24px; max-width: 1100px; margin: 0 auto; }
+h1 { font-size: 20px; font-weight: 600; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+h1 .icon { font-size: 24px; }
+
+.card { background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 24px; margin-bottom: 16px; }
+.card-title { font-size: 15px; font-weight: 600; color: #e6edf3; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.form-grid .full { grid-column: span 2; }
+.form-group label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 6px; font-weight: 500; }
+.form-group input, .form-group select { width: 100%; padding: 8px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 13px; font-family: inherit; }
+.form-group input:focus, .form-group select:focus { outline: none; border-color: #1f6feb; box-shadow: 0 0 0 3px rgba(31,111,235,0.12); }
+.form-group select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b949e'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px; cursor: pointer; }
+
+.form-inline { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+@media (max-width: 600px) { .form-grid, .form-inline { grid-template-columns: 1fr; } .form-grid .full { grid-column: span 1; } }
+
+.btn-row { display: flex; gap: 10px; margin-top: 20px; align-items: center; flex-wrap: wrap; }
+.btn { padding: 8px 18px; border: none; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.btn-primary { background: #238636; color: #fff; }
+.btn-primary:hover { background: #2ea043; }
+.btn-primary:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+.btn-danger { background: #da3633; color: #fff; }
+.btn-danger:hover { background: #f85149; }
+.btn-ghost { background: transparent; color: #c9d1d9; border: 1px solid #30363d; }
+.btn-ghost:hover { background: #21262d; border-color: #8b949e; }
+.btn-sm { padding: 4px 10px; font-size: 11px; }
+.status-text { font-size: 13px; color: #8b949e; }
+
+/* Model list */
+.model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 5px; max-height: 280px; overflow-y: auto; padding: 4px 0; }
+.model-item { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px; cursor: pointer; font-size: 12px; color: #c9d1d9; }
+.model-item:hover { background: #1f2a3a; }
+.model-item input[type=checkbox] { accent-color: #1f6feb; width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; }
+.model-actions { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.model-count { font-size: 12px; color: #8b949e; }
+.scan-status { font-size: 12px; color: #8b949e; margin-left: 8px; }
+
+/* Live Monitor */
+.metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.metric-box { background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 14px; text-align: center; }
+.metric-box .val { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.metric-box .lbl { font-size: 11px; color: #8b949e; margin-top: 4px; }
+.val-ok { color: #3fb950; }
+.val-err { color: #f85149; }
+.val-warn { color: #d2991d; }
+.progress-bar { height: 4px; background: #21262d; border-radius: 2px; margin: 16px 0; overflow: hidden; }
+.progress-bar .fill { height: 100%; background: #1f6feb; border-radius: 2px; transition: width 0.5s; }
+.dot-live { display: inline-block; width: 7px; height: 7px; background: #3fb950; border-radius: 50%; animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+/* Report */
+.report-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+.report-meta { font-size: 12px; color: #6e7681; line-height: 1.6; }
+.report-meta strong { color: #c9d1d9; }
+.big-stat { text-align: center; padding: 24px; background: #0d1117; border: 1px solid #21262d; border-radius: 8px; margin-bottom: 20px; }
+.big-stat .pct { font-size: 56px; font-weight: 800; }
+.big-stat .sub { font-size: 14px; color: #8b949e; margin-top: 4px; }
+.big-stat .extra { display: flex; justify-content: center; gap: 24px; margin-top: 12px; font-size: 13px; color: #8b949e; flex-wrap: wrap; }
+
+.tbl-wrap { overflow-x: auto; margin-bottom: 20px; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tbl thead th { padding: 8px 12px; text-align: right; color: #8b949e; font-weight: 500; font-size: 12px; border-bottom: 1px solid #21262d; white-space: nowrap; }
+.tbl thead th:first-child { text-align: left; }
+.tbl tbody td { padding: 9px 12px; text-align: right; border-bottom: 1px solid #21262d; font-variant-numeric: tabular-nums; }
+.tbl tbody td:first-child { text-align: left; font-weight: 500; }
+.tbl .hl { color: #58a6ff; font-weight: 600; }
+.section-title { font-size: 13px; font-weight: 600; color: #e6edf3; margin: 20px 0 8px; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.badge-ok { background: #238636; color: #fff; }
+.badge-warn { background: #9e6a03; color: #fff; }
+.badge-err { background: #da3633; color: #fff; }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<h1><span class="icon">⚡</span> 渠道压力测试</h1>
+
+<!-- Config Card -->
+<div class="card">
+  <div class="card-title">⚙️ 压测配置</div>
+  <div class="form-grid">
+    <div class="form-group">
+      <label>Base URL</label>
+      <input id="baseUrl" value="https://api.openai.com" placeholder="https://api.example.com">
+    </div>
+    <div class="form-group">
+      <label>API Key</label>
+      <input id="apiKey" type="text" value="" placeholder="sk-xxx" autocomplete="off">
+    </div>
+  </div>
+
+  <!-- 模型选择 -->
+  <div style="margin-top:16px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <label style="font-size:12px;color:#8b949e;font-weight:500">选择模型</label>
+      <button class="btn btn-ghost btn-sm" onclick="scanModels()">🔍 扫描模型</button>
+      <span class="scan-status" id="scanStatus"></span>
+    </div>
+    <div class="model-actions">
+      <button class="btn btn-ghost btn-sm" onclick="selectAllChat()">全选对话</button>
+      <button class="btn btn-ghost btn-sm" onclick="deselectAll()">取消全选</button>
+      <span class="model-count" id="modelCount">未扫描</span>
+    </div>
+    <div class="model-grid" id="modelList">
+      <span style="font-size:12px;color:#484f58;padding:8px">点击「扫描模型」获取可用模型列表，或直接在下方手动输入</span>
+    </div>
+    <div style="margin-top:8px">
+      <label style="font-size:11px;color:#484f58">手动输入（逗号分隔，优先级高于勾选）</label>
+      <input id="modelsManual" style="width:100%;margin-top:4px;font-size:12px;padding:6px 10px;background:#0d1117;border:1px solid #21262d;border-radius:4px;color:#6e7681" placeholder="留空则使用上方勾选的模型">
+    </div>
+  </div>
+
+  <div class="form-inline" style="margin-top:16px">
+    <div class="form-group" id="concurrencyGroup">
+      <label>并发数</label>
+      <input id="concurrency" type="number" min="1" max="5000" step="1" value="100" placeholder="手动输入，如 200">
+    </div>
+    <div class="form-group" id="rpmGroup" style="display:none">
+      <label>目标 RPM（每分钟请求数 / 缓存模式下=用户数）</label>
+      <input id="targetRpm" type="number" min="1" max="100000" step="10" value="200" placeholder="如 200">
+      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;cursor:pointer;color:#8b949e">
+        <input type="checkbox" id="rpmCache" style="width:auto" onchange="onModeChange()"> 缓存对话模式（每用户做多轮，测缓存命中）
+      </label>
+    </div>
+    <div class="form-group">
+      <label>持续时间 (秒)</label>
+      <select id="duration">
+        <option value="10">10</option><option value="20" selected>20</option><option value="30">30</option><option value="60">60</option><option value="120">120</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>测试模式</label>
+      <select id="mode" onchange="onModeChange()">
+        <option value="burst" selected>独立请求 (高QPS)</option>
+        <option value="conversation">连续对话 (Cache测试)</option>
+        <option value="rpm">RPM 开环 (模拟真实流量)</option>
+      </select>
+    </div>
+  </div>
+  <div class="form-inline" style="margin-top:16px">
+    <div class="form-group full">
+      <label>报告标签 (PDF / 页面表头名称)</label>
+      <input id="reportLabel" value="" placeholder="留空默认「渠道压力测试报告」，例如：我的渠道 压测报告" onchange="saveDraft()">
+    </div>
+  <div class="form-inline" style="margin-top:16px" id="convOpts" style="display:none">
+    <div class="form-group">
+      <label>每会话轮数</label>
+      <select id="rounds">
+        <option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="8">8</option><option value="10">10</option>
+      </select>
+    </div>
+  </div>
+  <div class="btn-row">
+    <button class="btn btn-primary" id="btnStart" onclick="start()">▶ 开始压测</button>
+    <button class="btn btn-danger hidden" id="btnStop" onclick="stop()">⏹ 停止</button>
+    <button class="btn btn-ghost hidden" id="btnClearDraft" onclick="clearDraft()">清空记忆</button>
+    <span class="status-text" id="statusText"></span>
+  </div>
+</div>
+
+<!-- Live Monitor -->
+<div id="liveCard" class="card hidden">
+  <div class="card-title"><span class="dot-live"></span> 实时监控 <span id="elapsedLabel" style="font-weight:400;color:#8b949e;font-size:13px;margin-left:8px"></span></div>
+  <div class="metrics-row">
+    <div class="metric-box"><div class="val" id="mTotal">0</div><div class="lbl">总请求</div></div>
+    <div class="metric-box"><div class="val val-ok" id="mOk">0</div><div class="lbl">成功</div></div>
+    <div class="metric-box"><div class="val val-err" id="mFail">0</div><div class="lbl">失败</div></div>
+    <div class="metric-box"><div class="val val-warn" id="m429">0</div><div class="lbl">限流(429)</div></div>
+    <div class="metric-box"><div class="val" id="mQPS">0</div><div class="lbl">QPS</div></div>
+    <div class="metric-box" id="boxRpm" style="display:none"><div class="val" id="mRpm">0</div><div class="lbl">实际RPM</div></div>
+    <div class="metric-box" id="boxInflight" style="display:none"><div class="val val-warn" id="mInflight">0</div><div class="lbl">在途/峰值</div></div>
+    <div class="metric-box"><div class="val val-warn" id="mCache">0</div><div class="lbl">Cache Hits</div></div>
+    <div class="metric-box"><div class="val" id="mAvg">0ms</div><div class="lbl">平均延迟</div></div>
+    <div class="metric-box"><div class="val" id="mP50">0ms</div><div class="lbl">P50</div></div>
+    <div class="metric-box"><div class="val" id="mP95">0ms</div><div class="lbl">P95</div></div>
+  </div>
+  <div class="progress-bar"><div class="fill" id="barFill" style="width:0%"></div></div>
+</div>
+
+<!-- Report -->
+<div id="reportWrap"></div>
+
+<script>
+var pollTimer = null;
+var _report = null;
+var _allModels = []; // {id, isChat}
+var _activeConfig = null;
+var STORAGE_KEY = "stress-test-dashboard-draft-v1";
+
+function $(id) { return document.getElementById(id); }
+function trimSlash(url) { return String(url || "").trim().replace(/\/+$/, ""); }
+function formatTime(iso) {
+  if (!iso) return "";
+  try { return new Date(iso).toLocaleString("zh-CN", { hour12: false }); } catch (_) { return iso; }
+}
+
+function getDraft() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveDraft(extra) {
+  var draft = {
+    baseUrl: trimSlash($("baseUrl").value),
+    apiKey: $("apiKey").value.trim(),
+    concurrency: $("concurrency").value,
+    targetRpm: $("targetRpm").value,
+    rpmCache: $("rpmCache").checked,
+    durationSeconds: $("duration").value,
+    roundsPerSession: $("rounds").value,
+    mode: $("mode").value,
+    reportLabel: $("reportLabel").value.trim(),
+    modelsManual: $("modelsManual").value.trim(),
+    selectedModels: getSelectedModels(),
+  };
+  if (extra && typeof extra === "object") {
+    Object.keys(extra).forEach(function(key) { draft[key] = extra[key]; });
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+  $("btnClearDraft").classList.remove("hidden");
+}
+
+function clearDraft() {
+  localStorage.removeItem(STORAGE_KEY);
+  $("btnClearDraft").classList.add("hidden");
+  $("statusText").textContent = "已清空本地记忆";
+}
+
+function applyConfig(config) {
+  if (!config) return;
+  if (config.baseUrl) $("baseUrl").value = trimSlash(config.baseUrl);
+  if (typeof config.apiKey === "string" && config.apiKey) $("apiKey").value = config.apiKey;
+  if (config.concurrency) $("concurrency").value = String(config.concurrency);
+  if (config.targetRpm) $("targetRpm").value = String(config.targetRpm);
+  if (typeof config.rpmCache === "boolean") $("rpmCache").checked = config.rpmCache;
+  if (config.mode) { $("mode").value = String(config.mode); }
+  if (config.durationSeconds) $("duration").value = String(config.durationSeconds);
+  if (config.roundsPerSession) $("rounds").value = String(config.roundsPerSession);
+  if (typeof config.reportLabel === "string") {
+    $("reportLabel").value = config.reportLabel;
+  }
+  if (Array.isArray(config.models) && config.models.length) {
+    $("modelsManual").value = config.models.join(", ");
+  } else if (typeof config.modelsManual === "string") {
+    $("modelsManual").value = config.modelsManual;
+  }
+}
+
+function bindDraftPersistence() {
+  ["baseUrl", "apiKey", "concurrency", "targetRpm", "duration", "rounds", "mode", "reportLabel", "modelsManual"].forEach(function(id) {
+    $(id).addEventListener("change", function() { saveDraft(); });
+    $(id).addEventListener("blur", function() { saveDraft(); });
+  });
+}
+
+function setRunningState(config, label) {
+  _activeConfig = config || _activeConfig;
+  $("btnStart").disabled = false;
+  $("btnStart").textContent = "▶ 开始压测";
+  $("btnStart").classList.add("hidden");
+  $("btnStop").classList.remove("hidden");
+  $("btnStop").disabled = false;
+  $("liveCard").classList.remove("hidden");
+  $("statusText").textContent = label || "压测运行中...";
+}
+
+function resetUI() {
+  $("btnStart").disabled = false;
+  $("btnStart").textContent = "▶ 开始压测";
+  $("btnStart").classList.remove("hidden");
+  $("btnStop").classList.add("hidden");
+  $("btnStop").disabled = false;
+}
+
+// ---- 扫描模型 ----
+function scanModels() {
+  var baseUrl = $("baseUrl").value.trim();
+  var apiKey = $("apiKey").value.trim();
+  if (!baseUrl || !apiKey) return alert("请先填写 Base URL 和 API Key");
+
+  $("scanStatus").textContent = "扫描中...";
+  $("scanStatus").style.color = "#d2991d";
+
+  fetch("/api/models", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ baseUrl: baseUrl, apiKey: apiKey }),
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    if (data.error) {
+      $("scanStatus").textContent = "❌ " + data.error;
+      $("scanStatus").style.color = "#f85149";
+      return;
+    }
+    _allModels = data.models || [];
+    $("scanStatus").textContent = "✅ " + _allModels.length + " 个模型";
+    $("scanStatus").style.color = "#3fb950";
+    $("modelCount").textContent = "已选 " + checkedCount() + " / " + _allModels.length;
+    renderModelList();
+  }).catch(function(e) {
+    $("scanStatus").textContent = "❌ " + e.message;
+    $("scanStatus").style.color = "#f85149";
+  });
+}
+
+function renderModelList() {
+  var grid = $("modelList");
+  var draft = getDraft();
+  var selected = Array.isArray(draft.selectedModels) ? draft.selectedModels : [];
+  var html = "";
+  _allModels.forEach(function(m) {
+    var checked = selected.length ? selected.indexOf(m.id) >= 0 : m.isChat;
+    html += '<label class="model-item">';
+    html += '<input type="checkbox" value="' + m.id + '" ' + (checked ? "checked" : "") + ' onchange="updateCount()">';
+    html += m.id;
+    if (!m.isChat) html += ' <span style="color:#484f58;font-size:10px">非对话</span>';
+    html += '</label>';
+  });
+  grid.innerHTML = html;
+  updateCount();
+}
+
+function getSelectedModels() {
+  var cbs = document.querySelectorAll("#modelList input[type=checkbox]:checked");
+  var result = [];
+  cbs.forEach(function(cb) { result.push(cb.value); });
+  return result;
+}
+
+function checkedCount() {
+  return document.querySelectorAll("#modelList input[type=checkbox]:checked").length;
+}
+
+function updateCount() {
+  $("modelCount").textContent = "已选 " + checkedCount() + " / " + _allModels.length;
+  saveDraft();
+}
+
+function selectAllChat() {
+  if (!_allModels.length) { alert("请先扫描模型"); return; }
+  document.querySelectorAll("#modelList input[type=checkbox]").forEach(function(cb) {
+    var model = _allModels.find(function(m) { return m.id === cb.value; });
+    cb.checked = model && model.isChat;
+  });
+  updateCount();
+}
+
+function deselectAll() {
+  document.querySelectorAll("#modelList input[type=checkbox]").forEach(function(cb) { cb.checked = false; });
+  updateCount();
+}
+
+function resolveModels() {
+  var manual = $("modelsManual").value.trim();
+  if (manual) return manual.split(",").map(function(s) { return s.trim(); }).filter(Boolean);
+  var sel = getSelectedModels();
+  if (!sel.length) { alert("请扫描并勾选模型，或手动输入"); return null; }
+  return sel;
+}
+
+// ---- 控制 ----
+var _activeConfig = null;
+
+function onModeChange() {
+  var mode = $("mode").value;
+  var isRpm = (mode === "rpm");
+  var rpmCacheOn = isRpm && $("rpmCache") && $("rpmCache").checked;
+  // 轮数选项：连续对话模式，或 RPM+缓存模式 时显示
+  document.getElementById("convOpts").style.display = (mode === "conversation" || rpmCacheOn) ? "grid" : "none";
+  document.getElementById("rpmGroup").style.display = isRpm ? "block" : "none";
+  document.getElementById("concurrencyGroup").style.display = isRpm ? "none" : "block";
+  saveDraft();
+}
+
+// 初始化时隐藏连续对话选项
+document.addEventListener("DOMContentLoaded", function() {
+  onModeChange();
+});
+
+function start() {
+  var models = resolveModels();
+  if (!models) return;
+
+  var mode = $("mode").value;
+  var config = {
+    baseUrl: trimSlash($("baseUrl").value),
+    apiKey: $("apiKey").value.trim(),
+    concurrency: parseInt($("concurrency").value) || 100,
+    durationSeconds: parseInt($("duration").value) || 20,
+    mode: mode,
+    timeout: 30000,
+    models: models,
+  };
+  if (mode === "conversation") {
+    config.roundsPerSession = parseInt($("rounds").value) || 6;
+    config.maxTokens = 150; // 连续对话固定 150
+  } else if (mode === "rpm") {
+    config.targetRpm = parseInt($("targetRpm").value) || 0;
+    config.concurrency = 1;       // RPM 开环模式不使用并发参数
+    config.rpmCache = $("rpmCache").checked;
+    if (config.rpmCache) {
+      config.roundsPerSession = parseInt($("rounds").value) || 4;
+      config.maxTokens = 150;     // 缓存对话固定 150
+    } else {
+      config.roundsPerSession = 1;
+      config.maxTokens = 20;
+    }
+    if (config.targetRpm < 1) return alert("请填写目标 RPM");
+  } else {
+    config.roundsPerSession = 1;
+    config.maxTokens = 20;  // 独立请求固定 20
+  }
+
+  if (!config.baseUrl || !config.apiKey) return alert("请填写 Base URL 和 API Key");
+  if (!config.models.length) return alert("至少选一个模型");
+  if (mode !== "rpm" && config.concurrency < 1) return alert("并发数至少为 1");
+
+  saveDraft({ models: models });
+  $("btnStart").disabled = true;
+  $("btnStart").textContent = "⏳ 启动中...";
+  $("reportWrap").innerHTML = "";
+  $("statusText").textContent = "";
+
+  fetch("/api/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  }).then(function(r) { return r.json(); }).then(function(res) {
+    if (res.error) { alert(res.error); resetUI(); return; }
+    var runLabel = mode === "rpm"
+      ? ("RPM 开环 " + config.targetRpm + (config.rpmCache ? " 用户/分 缓存对话" : " 请求/分") + " " + config.durationSeconds + "s")
+      : ((mode === "burst" ? "独立请求" : "连续对话") + " " + config.concurrency + "并发 " + config.durationSeconds + "s");
+    setRunningState(config, runLabel);
+    clearInterval(pollTimer);
+    poll();
+    pollTimer = setInterval(poll, 500);
+  }).catch(function(e) {
+    alert("启动失败: " + e.message);
+    resetUI();
+  });
+}
+
+function stop() {
+  $("btnStop").disabled = true;
+  $("statusText").textContent = "停止中，等待收尾...";
+  fetch("/api/stop", { method: "POST" }).catch(function(){});
+}
+
+// ---- 轮询 ----
+function poll() {
+  fetch("/api/snapshot").then(function(r) { return r.json(); }).then(function(s) {
+    if (s.config) {
+      _activeConfig = s.config;
+      applyConfig(s.config);
+    }
+    $("elapsedLabel").textContent = s.elapsed;
+    $("mTotal").textContent = s.totalDone;
+    $("mOk").textContent = s.success;
+    $("mFail").textContent = s.fail;
+    if ($("m429")) $("m429").textContent = s.rateLimited || 0;
+    $("mQPS").textContent = s.qps;
+    $("mCache").textContent = s.cacheHits;
+    // RPM 开环模式：显示实际 rpm 与在途/峰值并发
+    var isRpmMode = (s.config && s.config.mode === "rpm") || ($("mode").value === "rpm");
+    if (isRpmMode) {
+      if ($("boxRpm")) $("boxRpm").style.display = "";
+      if ($("boxInflight")) $("boxInflight").style.display = "";
+      if ($("mRpm")) $("mRpm").textContent = s.actualRpm || 0;
+      if ($("mInflight")) $("mInflight").textContent = (s.inflight || 0) + " / " + (s.peakInflight || 0);
+    }
+    $("mAvg").textContent = (s.latency.avg || 0).toFixed(0) + " ms";
+    $("mP50").textContent = (s.latency.p50 || 0).toFixed(0) + " ms";
+    $("mP95").textContent = (s.latency.p95 || 0).toFixed(0) + " ms";
+    var dur = (s.config && parseInt(s.config.durationSeconds, 10)) || parseInt($("duration").value, 10) || 20;
+    var el = parseFloat(s.elapsed) || 0;
+    $("barFill").style.width = Math.min(el / dur * 100, 100) + "%";
+    if (s.status === "running") {
+      setRunningState(s.config, "压测运行中... " + dur + "s / 已运行 " + s.elapsed);
+      return;
+    }
+    if (s.status === "stopping") {
+      setRunningState(s.config, "停止中，等待收尾... 已运行 " + s.elapsed);
+      $("btnStop").disabled = true;
+      return;
+    }
+    if (s.status === "done") {
+      clearInterval(pollTimer);
+      resetUI();
+      $("statusText").textContent = "✅ 压测完成";
+      showReport();
+      return;
+    }
+    if (s.status === "idle") {
+      clearInterval(pollTimer);
+      resetUI();
+      if ($("statusText").textContent.indexOf("停止中") === 0) $("statusText").textContent = "已停止";
+    }
+  }).catch(function(){});
+}
+
+// ---- 报告 ----
+function showReport() {
+  fetch("/api/report").then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.summary) return;
+    _report = d;
+    var s = d.summary, l = d.latency;
+    var rate = parseFloat(s.successRate);
+    var gc = rate >= 85 ? "#3fb950" : rate >= 60 ? "#d2991d" : "#f85149";
+    var models = (d.config && d.config.models || []).join(", ");
+    var reportMeta = [];
+    if (d.startedAt) reportMeta.push("开始 " + formatTime(d.startedAt));
+    if (d.endedAt) reportMeta.push("结束 " + formatTime(d.endedAt));
+    if (d.reportPath) reportMeta.push("归档 " + d.reportPath);
+
+    var h = '<div class="card">';
+    h += '<div class="report-header">';
+    h += '<div class="report-meta"><div style="font-size:14px;font-weight:600;color:#e6edf3;margin-bottom:4px">📋 ' + (reportLabel || "压测报告") + '</div>';
+    var headerLine = '模型 <strong>' + models + '</strong> · ';
+    if (s.targetRpm) {
+      headerLine += '目标 <strong>' + s.targetRpm + ' rpm</strong> · 实际 <strong>' + (s.actualRpm || 0) + ' rpm</strong> · 峰值在途 <strong>' + (s.peakInflight || 0) + '</strong>';
+    } else {
+      headerLine += '并发 <strong>' + s.concurrency + '</strong>';
+      if (s.equivalentRpm) headerLine += ' (≈ <strong>' + s.equivalentRpm + ' rpm</strong> 等效)';
+    }
+    headerLine += ' · 实测 <strong>' + s.duration + '</strong>';
+    h += headerLine;
+    if (reportMeta.length) h += '<br>' + reportMeta.join(" · ");
+    h += '</div>';
+    h += '<div style="display:flex;gap:8px;flex-shrink:0">';
+    h += '<button class="btn btn-ghost btn-sm" onclick="downloadJSON()">📥 JSON</button>';
+    h += '<button class="btn btn-ghost btn-sm" onclick="downloadPDF()">📄 PDF</button>';
+    h += '<button class="btn btn-ghost btn-sm" onclick="copyText()">📋 复制</button>';
+    h += '</div></div>';
+
+    h += '<div class="big-stat">';
+    h += '<div class="pct" style="color:' + gc + '">' + s.successRate + '</div><div class="sub">成功率</div>';
+    h += '<div class="extra"><span>平均延迟 <strong style="color:#58a6ff">' + Number(l.avg).toFixed(2) + ' ms</strong></span><span>' + Number(l.min).toFixed(2) + ' — ' + Number(l.max).toFixed(2) + ' ms</span></div>';
+    h += '</div>';
+
+    h += '<div class="metrics-row">';
+    h += '<div class="metric-box"><div class="val">' + s.totalDone + '</div><div class="lbl">总请求</div></div>';
+    h += '<div class="metric-box"><div class="val val-ok">' + s.success + '</div><div class="lbl">成功</div></div>';
+    h += '<div class="metric-box"><div class="val val-err">' + s.fail + '</div><div class="lbl">失败</div></div>';
+    h += '<div class="metric-box"><div class="val val-warn">' + (s.rateLimited || 0) + '</div><div class="lbl">限流(429)</div></div>';
+    h += '<div class="metric-box"><div class="val">' + s.qps + '</div><div class="lbl">QPS</div></div>';
+    if (s.targetRpm) {
+      h += '<div class="metric-box"><div class="val">' + (s.actualRpm || 0) + '</div><div class="lbl">实际RPM</div></div>';
+      h += '<div class="metric-box"><div class="val val-warn">' + (s.peakInflight || 0) + '</div><div class="lbl">峰值在途并发</div></div>';
+    } else if (s.equivalentRpm) {
+      h += '<div class="metric-box"><div class="val">' + s.equivalentRpm + '</div><div class="lbl">等效RPM</div></div>';
+    }
+    h += '<div class="metric-box"><div class="val val-warn">' + s.cacheHitRate + '</div><div class="lbl">Cache 命中率</div></div>';
+    h += '<div class="metric-box"><div class="val">' + s.conversationsDone + '</div><div class="lbl">会话完成</div></div>';
+    h += '</div>';
+
+    h += '<div class="section-title">⏱️ 延迟分布 (成功请求, ms)</div>';
+    h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>指标</th><th>延迟(ms)</th></tr></thead><tbody>';
+    h += '<tr><td>平均</td><td class="hl">' + Number(l.avg).toFixed(2) + '</td></tr>';
+    h += '<tr><td>最小</td><td>' + Number(l.min).toFixed(2) + '</td></tr>';
+    h += '<tr><td>最大</td><td>' + Number(l.max).toFixed(2) + '</td></tr>';
+    h += '<tr><td>P50</td><td>' + Number(l.p50).toFixed(2) + '</td></tr>';
+    h += '<tr><td>P90</td><td>' + Number(l.p90).toFixed(2) + '</td></tr>';
+    h += '<tr><td>P95</td><td class="hl">' + Number(l.p95).toFixed(2) + '</td></tr>';
+    h += '<tr><td>P99</td><td>' + Number(l.p99).toFixed(2) + '</td></tr>';
+    h += '</tbody></table></div>';
+
+    if (d.perTurnCache && d.perTurnCache.length) {
+      h += '<div class="section-title">💾 逐轮 Cache 命中率</div>';
+      h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>轮次</th><th>请求数</th><th>Cache命中</th><th>命中率</th></tr></thead><tbody>';
+      d.perTurnCache.forEach(function(t) {
+        var b = parseFloat(t.rate) >= 50 ? "ok" : (parseFloat(t.rate) > 0 ? "warn" : "err");
+        h += '<tr><td>第' + t.turn + '轮</td><td>' + t.total + '</td><td>' + t.hits + '</td><td><span class="badge badge-' + b + '">' + t.rate + '%</span></td></tr>';
+      });
+      h += '</tbody></table></div>';
+    }
+
+    h += '<div class="section-title">🤖 各模型表现</div>';
+    h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>模型</th><th>成功</th><th>失败</th><th>成功率</th><th>TTFB</th><th>平均</th><th>P50</th><th>P90</th><th>P95</th><th>P99</th></tr></thead><tbody>';
+    d.models.forEach(function(m) {
+      var b = parseFloat(m.rate) >= 90 ? "ok" : (parseFloat(m.rate) >= 50 ? "warn" : "err");
+      h += '<tr><td>' + m.model + '</td><td>' + m.success + '</td><td>' + m.fail + '</td>';
+      h += '<td><span class="badge badge-' + b + '">' + m.rate + '%</span></td>';
+      h += '<td>' + (m.avgTtfb ? Number(m.avgTtfb).toFixed(0) + 'ms' : '-') + '</td>';
+      h += '<td>' + Number(m.avgLatency).toFixed(0) + 'ms</td><td>' + Number(m.p50).toFixed(0) + 'ms</td><td>' + Number(m.p90).toFixed(0) + 'ms</td>';
+      h += '<td>' + Number(m.p95).toFixed(0) + 'ms</td><td>' + Number(m.p99).toFixed(0) + 'ms</td></tr>';
+    });
+    h += '</tbody></table></div>';
+
+    if (d.errorSummary && d.errorSummary.length) {
+      h += '<div class="section-title" style="color:#f85149">❌ 错误分布</div>';
+      h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>错误类型</th><th>次数</th></tr></thead><tbody>';
+      d.errorSummary.forEach(function(e) { h += '<tr><td>' + (e.type || "").slice(0, 80) + '</td><td>' + e.count + '</td></tr>'; });
+      h += '</tbody></table></div>';
+    }
+    h += '</div>';
+    $("reportWrap").innerHTML = h;
+  });
+}
+
+function copyText() {
+  if (!_report) return;
+  var d = _report, s = d.summary, l = d.latency;
+  var models = (d.config && d.config.models || []).join(",");
+  var loadLine = s.targetRpm
+    ? ("目标" + s.targetRpm + "rpm 实际" + (s.actualRpm || 0) + "rpm 峰值在途" + (s.peakInflight || 0))
+    : ("并发" + s.concurrency + (s.equivalentRpm ? " (≈" + s.equivalentRpm + "rpm)" : ""));
+  var lines = [
+    "模型 " + models + "  " + loadLine + "  实测" + s.duration + "  " + new Date().toISOString(),
+    "", "成功率: " + s.successRate,
+    "限流(429): " + (s.rateLimited || 0),
+    "平均延迟: " + Number(l.avg).toFixed(2) + " ms",
+    "最小延迟: " + Number(l.min).toFixed(2) + " ms",
+    "最大延迟: " + Number(l.max).toFixed(2) + " ms",
+    "", "指标      延迟(ms)", "平均       " + Number(l.avg).toFixed(2),
+    Number(l.min).toFixed(2) + " — " + Number(l.max).toFixed(2),
+    "P50        " + Number(l.p50).toFixed(2),
+    "P90        " + Number(l.p90).toFixed(2),
+    "P95        " + Number(l.p95).toFixed(2),
+    "P99        " + Number(l.p99).toFixed(2),
+    "", "QPS: " + s.qps + "  |  Cache命中率: " + s.cacheHitRate, "", "各模型:",
+  ];
+  d.models.forEach(function(m) { lines.push("  " + m.model + ": " + m.rate + "% 平均" + Number(m.avgLatency).toFixed(0) + "ms P95=" + Number(m.p95).toFixed(0) + "ms"); });
+  if (d.perTurnCache && d.perTurnCache.length) {
+    lines.push(""); lines.push("逐轮Cache: " + d.perTurnCache.map(function(t) { return "第" + t.turn + "轮 " + t.rate + "%"; }).join(", "));
+  }
+  navigator.clipboard.writeText(lines.join("\n")).then(function() { alert("已复制到剪贴板"); });
+}
+
+function downloadJSON() {
+  if (!_report) return;
+  var blob = new Blob([JSON.stringify(_report, null, 2)], { type: "application/json" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (_report.runId || ("stress-test-" + new Date().toISOString().replace(/[:.]/g, "-"))) + ".json";
+  a.click();
+}
+
+function downloadPDF() {
+  if (!_report) return;
+  var d = _report, s = d.summary, l = d.latency;
+  var models = (d.config && d.config.models || []).join(", ");
+
+  var css = '<style>';
+  css += '@page{size:A4;margin:8mm}';
+  css += '*{margin:0;padding:0;box-sizing:border-box}';
+  css += 'body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#fff;color:#1d1d1f;padding:20px 30px;max-width:800px;margin:0 auto;font-size:12px;line-height:1.5}';
+  css += 'h1{font-size:20px;margin-bottom:2px;color:#1d1d1f}';
+  css += '.sub{color:#6e6e73;font-size:11px;margin-bottom:16px}';
+  css += '.top-bar{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px}';
+  css += '.section{margin-bottom:12px}';
+  css += '.section h2{font-size:14px;color:#1d1d1f;margin-bottom:6px;padding-bottom:4px;border-bottom:1.5px solid #e8e8ed}';
+  css += '.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}';
+  css += '.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}';
+  css += '.grid-5{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px}';
+  css += '.grid-item{background:#f5f5f7;border-radius:8px;padding:12px;text-align:center}';
+  css += '.grid-item .val{font-size:22px;font-weight:700}';
+  css += '.grid-item .lbl{font-size:10px;color:#6e6e73;margin-top:2px}';
+  css += '.grade-box{display:flex;align-items:center;gap:16px;background:#f5f5f7;border-radius:12px;padding:20px 24px;margin-bottom:12px}';
+  css += '.grade-box .big{font-size:56px;font-weight:800;line-height:1}';
+  css += '.grade-box .info{font-size:12px;color:#6e6e73}';
+  css += '.grade-box .info strong{color:#1d1d1f}';
+  css += 'table{width:100%;border-collapse:collapse;margin-bottom:8px}';
+  css += 'th,td{padding:5px 8px;text-align:right;border-bottom:1px solid #e8e8ed;font-size:11px}';
+  css += 'th{color:#6e6e73;font-weight:500;font-size:10px;letter-spacing:.3px}';
+  css += 'td:first-child,th:first-child{text-align:left}';
+  css += '.badge{display:inline-block;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:600}';
+  css += '.badge-ok{background:#e8f5e9;color:#2e7d32}';
+  css += '.badge-warn{background:#fff3e0;color:#e65100}';
+  css += '.badge-err{background:#ffebee;color:#c62828}';
+  css += '.hl{color:#0071e3;font-weight:700}';
+  css += '.note{background:#f8f9fa;border-radius:8px;padding:10px 14px;margin-top:8px;font-size:11px;color:#5d4037}';
+  css += '.footer{text-align:center;color:#aeaeb2;font-size:9px;margin-top:16px;padding-top:8px;border-top:1px solid #e8e8ed}';
+  css += '@media print{body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}';
+  css += '</style>';
+
+  var rate = parseFloat(s.successRate);
+  var grade = rate >= 95 ? "A+" : rate >= 80 ? "A" : rate >= 60 ? "B" : "C";
+  var gc = rate >= 95 ? "#2e7d32" : rate >= 80 ? "#0071e3" : rate >= 60 ? "#e65100" : "#c62828";
+
+  var reportLabel = (d.config && d.config.reportLabel) || $("reportLabel").value.trim();
+  var title = reportLabel || "渠道压力测试报告";
+  var html = '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>' + title + '</title>' + css + '</head><body>';
+
+  html += '<div class="top-bar">';
+  var pdfSub = models + ' · ';
+  if (s.targetRpm) {
+    pdfSub += '目标 ' + s.targetRpm + ' rpm · 实际 ' + (s.actualRpm || 0) + ' rpm · 峰值在途 ' + (s.peakInflight || 0);
+  } else {
+    pdfSub += '并发' + s.concurrency;
+    if (s.equivalentRpm) pdfSub += ' (≈' + s.equivalentRpm + ' rpm)';
+  }
+  pdfSub += ' · ' + s.duration + ' · ' + new Date().toISOString();
+  html += '<div><h1>📊 ' + title + '</h1><div class="sub">' + pdfSub + '</div></div>';
+  html += '</div>';
+
+  html += '<div class="grade-box">';
+  html += '<div class="big" style="color:' + gc + '">' + grade + '</div>';
+  html += '<div class="info"><strong>成功率</strong> ' + s.successRate + '<br><strong>平均延迟</strong> ' + Number(l.avg).toFixed(1) + 'ms<br><strong>QPS</strong> ' + s.qps + '<br><strong>Cache命中率</strong> ' + (s.cacheHitRate || "N/A") + '</div>';
+  html += '</div>';
+
+  html += '<div class="grid-5">';
+  html += '<div class="grid-item"><div class="val">' + s.totalDone + '</div><div class="lbl">总请求</div></div>';
+  html += '<div class="grid-item"><div class="val" style="color:#2e7d32">' + s.success + '</div><div class="lbl">成功</div></div>';
+  html += '<div class="grid-item"><div class="val" style="color:#c62828">' + s.fail + '</div><div class="lbl">失败</div></div>';
+  html += '<div class="grid-item"><div class="val" style="color:#e65100">' + (s.rateLimited || 0) + '</div><div class="lbl">限流(429)</div></div>';
+  html += '<div class="grid-item"><div class="val" style="color:#0071e3">' + s.qps + '</div><div class="lbl">QPS</div></div>';
+  html += '</div>';
+
+  if (d.perTurnCache && d.perTurnCache.length) {
+    html += '<div class="section" style="text-align:center"><h2>💾 Prompt Cache</h2><table>';
+    html += '<tr><th>轮次</th><th>请求</th><th>说明</th><th>命中率</th></tr>';
+    d.perTurnCache.forEach(function(t) {
+      var isCreate = parseInt(t.turn) === 1;
+      var label = isCreate ? '创建缓存' : '命中缓存';
+      var b = isCreate ? 'badge-warn' : 'badge-ok';
+      html += '<tr><td>第' + t.turn + '轮</td><td>' + t.total + '</td><td>' + label + '</td><td><span class="badge ' + b + '">' + t.rate + '%</span></td></tr>';
+    });
+    html += '</table></div>';
+  }
+
+  html += '<div class="section"><h2>⏱️ 延迟分布 (ms)</h2><table>';
+  html += '<tr><th>指标</th><th>值</th></tr>';
+  html += '<tr><td>平均</td><td class="hl">' + Number(l.avg).toFixed(1) + '</td></tr>';
+  html += '<tr><td>最小</td><td>' + Number(l.min).toFixed(1) + '</td></tr>';
+  html += '<tr><td>最大</td><td>' + Number(l.max).toFixed(1) + '</td></tr>';
+  html += '<tr><td>P50</td><td>' + Number(l.p50).toFixed(1) + '</td></tr>';
+  html += '<tr><td>P90</td><td>' + Number(l.p90).toFixed(1) + '</td></tr>';
+  html += '<tr><td>P95</td><td class="hl">' + Number(l.p95).toFixed(1) + '</td></tr>';
+  html += '<tr><td>P99</td><td>' + Number(l.p99).toFixed(1) + '</td></tr>';
+  html += '</table></div>';
+  html += '</div>';
+
+  html += '<div class="section"><h2>🤖 各模型表现</h2><table>';
+  html += '<tr><th>模型</th><th>成功</th><th>失败</th><th>成功率</th><th>平均</th><th>P50</th><th>P90</th><th>P95</th></tr>';
+  d.models.forEach(function(m) {
+    var b = parseFloat(m.rate) >= 90 ? "badge-ok" : (parseFloat(m.rate) >= 50 ? "badge-warn" : "badge-err");
+    html += '<tr><td style="font-weight:600">' + m.model + '</td><td>' + m.success + '</td><td>' + m.fail + '</td>';
+    html += '<td><span class="badge ' + b + '">' + m.rate + '%</span></td>';
+    html += '<td>' + Number(m.avgLatency).toFixed(0) + 'ms</td><td>' + Number(m.p50).toFixed(0) + 'ms</td><td>' + Number(m.p90).toFixed(0) + 'ms</td><td>' + Number(m.p95).toFixed(0) + 'ms</td></tr>';
+  });
+  html += '</table></div>';
+
+  if (d.errorSummary && d.errorSummary.length) {
+    html += '<div class="section"><h2>❌ 错误分布</h2><table>';
+    html += '<tr><th>错误类型</th><th>次数</th></tr>';
+    d.errorSummary.slice(0,5).forEach(function(e) { html += '<tr><td>' + (e.type || "").slice(0, 80) + '</td><td>' + e.count + '</td></tr>'; });
+    html += '</table></div>';
+  }
+
+  html += '<div class="note">📝 <strong>综合评级: ' + grade + '</strong> — 成功率 ' + s.successRate + ' · 平均延迟 ' + Number(l.avg).toFixed(1) + 'ms · P95延迟 ' + Number(l.p95).toFixed(1) + 'ms · QPS ' + s.qps + ' · Cache ' + (s.cacheHitRate || "N/A") + '</div>';
+  html += '<div class="footer">🦞 ' + title + ' · ' + new Date().toISOString() + '</div>';
+  html += '</body></html>';
+
+  var pdfWin = window.open("", "_blank", "width=900,height=700");
+  pdfWin.document.write(html);
+  pdfWin.document.close();
+  setTimeout(function() { pdfWin.print(); }, 500);
+}
+
+// 初始化
+applyConfig(getDraft());
+if (localStorage.getItem(STORAGE_KEY)) $("btnClearDraft").classList.remove("hidden");
+bindDraftPersistence();
+
+fetch("/api/snapshot").then(function(r) { return r.json(); }).then(function(s) {
+  if (s.status === "running") {
+    if (s.config) applyConfig(s.config);
+    setRunningState(s.config, "恢复监控中...");
+    poll();
+    pollTimer = setInterval(poll, 500);
+  } else if (s.status === "stopping") {
+    if (s.config) applyConfig(s.config);
+    setRunningState(s.config, "恢复收尾中...");
+    $("btnStop").disabled = true;
+    poll();
+    pollTimer = setInterval(poll, 500);
+  } else if (s.status === "done") {
+    $("liveCard").classList.remove("hidden");
+    showReport();
+  }
+});
+</script>
+</body>
+</html>

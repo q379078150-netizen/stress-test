@@ -1,0 +1,28 @@
+# ===== 依赖 =====
+node_modules/
+
+# ===== 日志 / 压测报告（含渠道 URL，绝不上传）=====
+logs/
+*.log
+*-report-*.txt
+*-report-*.html
+stress-*.json
+report-*.json
+
+# ===== 接力文档（含真实渠道信息，不上传）=====
+压力测试接力文档.md
+*接力文档*
+
+# ===== 密钥 / 本地配置（绝不上传）=====
+*.key
+*.pem
+.env
+.env.*
+config.local.*
+secrets.*
+*apikey*
+*api-key*
+*api_key*
+
+# ===== 系统文件 =====
+.DS_Store
