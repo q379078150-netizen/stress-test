@@ -133,7 +133,7 @@ h1 .icon { font-size: 24px; }
         <input type="checkbox" id="rpmCache" style="width:auto" onchange="onModeChange()"> 缓存对话模式（每用户做多轮，测缓存命中）
       </label>
     </div>
-    <div class="form-group">
+    <div class="form-group" id="durationGroup">
       <label>持续时间 (秒)</label>
       <select id="duration">
         <option value="10">10</option><option value="20" selected>20</option><option value="30">30</option><option value="60">60</option><option value="120">120</option>
@@ -396,11 +396,16 @@ function onModeChange() {
   var mode = $("mode").value;
   var isRpm = (mode === "rpm");
   var isImage = (mode === "image");
+  var isBatch = (mode === "burst" || mode === "image");  // 一次性批量，无需时间
   var rpmCacheOn = isRpm && $("rpmCache") && $("rpmCache").checked;
   document.getElementById("convOpts").style.display = (mode === "conversation" || rpmCacheOn) ? "grid" : "none";
   document.getElementById("rpmGroup").style.display = isRpm ? "block" : "none";
   document.getElementById("concurrencyGroup").style.display = isRpm ? "none" : "block";
   document.getElementById("imageOpts").style.display = isImage ? "grid" : "none";
+  document.getElementById("durationGroup").style.display = isBatch ? "none" : "block";
+  // 并发数 label
+  var concLabel = document.querySelector("#concurrencyGroup label");
+  if (concLabel) concLabel.textContent = isBatch ? "并发数（同时发出的请求总数）" : "并发数";
   saveDraft();
 }
 
@@ -414,11 +419,12 @@ function start() {
   if (!models) return;
 
   var mode = $("mode").value;
+  var isBatch = (mode === "burst" || mode === "image");
   var config = {
     baseUrl: trimSlash($("baseUrl").value),
     apiKey: $("apiKey").value.trim(),
     concurrency: parseInt($("concurrency").value) || 100,
-    durationSeconds: parseInt($("duration").value) || 20,
+    durationSeconds: isBatch ? 0 : (parseInt($("duration").value) || 20),
     mode: mode,
     timeout: 30000,
     models: models,
@@ -441,8 +447,9 @@ function start() {
   } else if (mode === "image") {
     config.imageSize = $("imageSize").value || "1024x1024";
     config.maxTokens = 5;
-    config.timeout = 120000;  // 图片生成最长 2 分钟
+    config.timeout = 120000;
   } else {
+    // burst: 一次性批量，并发数即总请求数
     config.roundsPerSession = 1;
     config.maxTokens = 20;
   }
@@ -466,8 +473,10 @@ function start() {
     var runLabel = mode === "rpm"
       ? ("RPM 开环 " + config.targetRpm + (config.rpmCache ? " 用户/分 缓存对话" : " 请求/分") + " " + config.durationSeconds + "s")
       : mode === "image"
-      ? ("图片生成 " + config.concurrency + "并发 " + config.imageSize + " " + config.durationSeconds + "s")
-      : ((mode === "burst" ? "独立请求" : "连续对话") + " " + config.concurrency + "并发 " + config.durationSeconds + "s");
+      ? ("图片生成 一次性 " + config.concurrency + " 张 " + config.imageSize)
+      : mode === "burst"
+      ? ("独立请求 一次性 " + config.concurrency + " 个")
+      : ("连续对话 " + config.concurrency + "并发 " + config.durationSeconds + "s");
     setRunningState(config, runLabel);
     clearInterval(pollTimer);
     poll();
@@ -498,22 +507,36 @@ function poll() {
     if ($("m429")) $("m429").textContent = s.rateLimited || 0;
     $("mQPS").textContent = s.qps;
     $("mCache").textContent = s.cacheHits;
-    // RPM 开环模式：显示实际 rpm 与在途/峰值并发
-    var isRpmMode = (s.config && s.config.mode === "rpm") || ($("mode").value === "rpm");
+    var mode = (s.config && s.config.mode) || $("mode").value;
+    var isRpmMode = (mode === "rpm");
+    var isBatch = (mode === "burst" || mode === "image");
     if (isRpmMode) {
       if ($("boxRpm")) $("boxRpm").style.display = "";
       if ($("boxInflight")) $("boxInflight").style.display = "";
       if ($("mRpm")) $("mRpm").textContent = s.actualRpm || 0;
       if ($("mInflight")) $("mInflight").textContent = (s.inflight || 0) + " / " + (s.peakInflight || 0);
     }
-    $("mAvg").textContent = (s.latency.avg || 0).toFixed(0) + " ms";
-    $("mP50").textContent = (s.latency.p50 || 0).toFixed(0) + " ms";
-    $("mP95").textContent = (s.latency.p95 || 0).toFixed(0) + " ms";
-    var dur = (s.config && parseInt(s.config.durationSeconds, 10)) || parseInt($("duration").value, 10) || 20;
-    var el = parseFloat(s.elapsed) || 0;
-    $("barFill").style.width = Math.min(el / dur * 100, 100) + "%";
+    // 延迟单位：秒（保留 2 位小数）
+    var avg = (s.latency.avg || 0) / 1000;
+    var p50 = (s.latency.p50 || 0) / 1000;
+    var p95 = (s.latency.p95 || 0) / 1000;
+    $("mAvg").textContent = avg.toFixed(2) + "s";
+    $("mP50").textContent = p50.toFixed(2) + "s";
+    $("mP95").textContent = p95.toFixed(2) + "s";
+    // 进度条：批量模式=完成数/总数，时长模式=已过时间/总时间
+    if (isBatch) {
+      var total = (s.config && s.config.concurrency) || 1;
+      $("barFill").style.width = Math.min(s.totalDone / total * 100, 100) + "%";
+    } else {
+      var dur = (s.config && parseInt(s.config.durationSeconds, 10)) || parseInt($("duration").value, 10) || 20;
+      var el = parseFloat(s.elapsed) || 0;
+      $("barFill").style.width = Math.min(el / dur * 100, 100) + "%";
+    }
     if (s.status === "running") {
-      setRunningState(s.config, "压测运行中... " + dur + "s / 已运行 " + s.elapsed);
+      var runMsg = isBatch
+        ? ("压测中... " + s.totalDone + " / " + ((s.config && s.config.concurrency) || "?") + " 完成")
+        : ("压测运行中... " + ((s.config && s.config.durationSeconds) || "?") + "s / 已运行 " + s.elapsed);
+      setRunningState(s.config, runMsg);
       return;
     }
     if (s.status === "stopping") {
@@ -574,7 +597,10 @@ function showReport() {
 
     h += '<div class="big-stat">';
     h += '<div class="pct" style="color:' + gc + '">' + s.successRate + '</div><div class="sub">成功率</div>';
-    h += '<div class="extra"><span>平均延迟 <strong style="color:#58a6ff">' + Number(l.avg).toFixed(2) + ' ms</strong></span><span>' + Number(l.min).toFixed(2) + ' — ' + Number(l.max).toFixed(2) + ' ms</span></div>';
+    var avgSec = (Number(l.avg) / 1000).toFixed(2);
+    var minSec = (Number(l.min) / 1000).toFixed(2);
+    var maxSec = (Number(l.max) / 1000).toFixed(2);
+    h += '<div class="extra"><span>平均延迟 <strong style="color:#58a6ff">' + avgSec + 's</strong></span><span>' + minSec + 's — ' + maxSec + 's</span></div>';
     h += '</div>';
 
     h += '<div class="metrics-row">';
@@ -599,14 +625,14 @@ function showReport() {
     h += '</div>';
 
     h += '<div class="section-title">⏱️ 延迟分布 (成功请求, ms)</div>';
-    h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>指标</th><th>延迟(ms)</th></tr></thead><tbody>';
-    h += '<tr><td>平均</td><td class="hl">' + Number(l.avg).toFixed(2) + '</td></tr>';
-    h += '<tr><td>最小</td><td>' + Number(l.min).toFixed(2) + '</td></tr>';
-    h += '<tr><td>最大</td><td>' + Number(l.max).toFixed(2) + '</td></tr>';
-    h += '<tr><td>P50</td><td>' + Number(l.p50).toFixed(2) + '</td></tr>';
-    h += '<tr><td>P90</td><td>' + Number(l.p90).toFixed(2) + '</td></tr>';
-    h += '<tr><td>P95</td><td class="hl">' + Number(l.p95).toFixed(2) + '</td></tr>';
-    h += '<tr><td>P99</td><td>' + Number(l.p99).toFixed(2) + '</td></tr>';
+    h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>指标</th><th>延迟(s)</th></tr></thead><tbody>';
+    h += '<tr><td>平均</td><td class="hl">' + (Number(l.avg)/1000).toFixed(3) + '</td></tr>';
+    h += '<tr><td>最小</td><td>' + (Number(l.min)/1000).toFixed(3) + '</td></tr>';
+    h += '<tr><td>最大</td><td>' + (Number(l.max)/1000).toFixed(3) + '</td></tr>';
+    h += '<tr><td>P50</td><td>' + (Number(l.p50)/1000).toFixed(3) + '</td></tr>';
+    h += '<tr><td>P90</td><td>' + (Number(l.p90)/1000).toFixed(3) + '</td></tr>';
+    h += '<tr><td>P95</td><td class="hl">' + (Number(l.p95)/1000).toFixed(3) + '</td></tr>';
+    h += '<tr><td>P99</td><td>' + (Number(l.p99)/1000).toFixed(3) + '</td></tr>';
     h += '</tbody></table></div>';
 
     if (d.perTurnCache && d.perTurnCache.length) {
@@ -623,11 +649,12 @@ function showReport() {
     h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>模型</th><th>成功</th><th>失败</th><th>成功率</th><th>TTFB</th><th>平均</th><th>P50</th><th>P90</th><th>P95</th><th>P99</th></tr></thead><tbody>';
     d.models.forEach(function(m) {
       var b = parseFloat(m.rate) >= 90 ? "ok" : (parseFloat(m.rate) >= 50 ? "warn" : "err");
+      function ms2s(v) { return (Number(v)/1000).toFixed(2) + 's'; }
       h += '<tr><td>' + m.model + '</td><td>' + m.success + '</td><td>' + m.fail + '</td>';
       h += '<td><span class="badge badge-' + b + '">' + m.rate + '%</span></td>';
-      h += '<td>' + (m.avgTtfb ? Number(m.avgTtfb).toFixed(0) + 'ms' : '-') + '</td>';
-      h += '<td>' + Number(m.avgLatency).toFixed(0) + 'ms</td><td>' + Number(m.p50).toFixed(0) + 'ms</td><td>' + Number(m.p90).toFixed(0) + 'ms</td>';
-      h += '<td>' + Number(m.p95).toFixed(0) + 'ms</td><td>' + Number(m.p99).toFixed(0) + 'ms</td></tr>';
+      h += '<td>' + (m.avgTtfb ? ms2s(m.avgTtfb) : '-') + '</td>';
+      h += '<td>' + ms2s(m.avgLatency) + '</td><td>' + ms2s(m.p50) + '</td><td>' + ms2s(m.p90) + '</td>';
+      h += '<td>' + ms2s(m.p95) + '</td><td>' + ms2s(m.p99) + '</td></tr>';
     });
     h += '</tbody></table></div>';
 

@@ -200,7 +200,7 @@ class StressTestEngine {
 
     const { baseUrl, apiKey, concurrency, durationSeconds, models, roundsPerSession, mode, maxTokens } = config;
     const isBurst = mode === "burst";
-    const rounds = roundsPerSession || (isBurst ? 1 : 6);
+    const rounds = roundsPerSession || 6;
     const maxTok = maxTokens || (isBurst ? 20 : 150);
 
     // RPM 开环模式
@@ -221,87 +221,78 @@ class StressTestEngine {
       return this.lastReport;
     }
 
-    // 图片生成模式 — 闭环并发，每 worker 循环调 /v1/images/generations
+    // 图片生成模式 — 一次性批量并发，所有请求同时发出，全部完成即结束
     if (mode === "image") {
       const imageSize = config.imageSize || "1024x1024";
-      const durationMs = (durationSeconds || 20) * 1000;
-      const self = this;
-
-      const workers = [];
+      this._rpmControllers = new Set();
+      const promises = [];
       for (let w = 0; w < concurrency; w++) {
-        workers.push((async function(wIdx) {
-          const identity = makeIdentity(wIdx);
-          const model = models[wIdx % models.length];
-          while (self.running) {
-            const prompt = IMAGE_PROMPTS[Math.floor(Math.random() * IMAGE_PROMPTS.length)];
-            await self.fireImageGeneration(baseUrl, apiKey, model, prompt, imageSize, config.timeout, identity);
-          }
-        })(w));
+        const identity = makeIdentity(w);
+        const model = models[w % models.length];
+        const prompt = IMAGE_PROMPTS[w % IMAGE_PROMPTS.length];
+        promises.push(this.fireImageGeneration(baseUrl, apiKey, model, prompt, imageSize, config.timeout, identity));
       }
-
-      const stopTimer = setTimeout(function() { self.running = false; }, durationMs);
-      await Promise.all(workers);
-      clearTimeout(stopTimer);
-
+      console.log("[压测] 图片生成 一次性 " + concurrency + " 个并发请求");
+      await Promise.all(promises);
+      this._rpmControllers = null;
       this.endTime = Date.now();
       this.running = false;
       this.stopRequested = false;
       const report = this.generateReport();
-      try {
-        this.reportPath = saveReportToDisk(report);
-        report.reportPath = this.reportPath;
-      } catch (e) {
-        report.reportSaveError = e.message;
-        console.error("[压测报告保存失败]", e.message);
-      }
+      try { this.reportPath = saveReportToDisk(report); report.reportPath = this.reportPath; } catch (e) { report.reportSaveError = e.message; }
       this.lastReport = report;
       return this.lastReport;
     }
 
+    // 独立请求模式 — 一次性批量并发，所有请求同时发出，全部完成即结束
+    if (isBurst) {
+      this._rpmControllers = new Set();
+      const promises = [];
+      for (let w = 0; w < concurrency; w++) {
+        const identity = makeIdentity(w);
+        const model = models[w % models.length];
+        const q = SHORT_MSGS[w % SHORT_MSGS.length];
+        promises.push(this.fireOneOpenLoop(baseUrl, apiKey, model, q, maxTok, config.timeout, identity));
+      }
+      console.log("[压测] 独立请求 一次性 " + concurrency + " 个并发请求");
+      await Promise.all(promises);
+      this._rpmControllers = null;
+      this.endTime = Date.now();
+      this.running = false;
+      this.stopRequested = false;
+      const report = this.generateReport();
+      try { this.reportPath = saveReportToDisk(report); report.reportPath = this.reportPath; } catch (e) { report.reportSaveError = e.message; }
+      this.lastReport = report;
+      return this.lastReport;
+    }
+
+    // 连续对话模式 — 多 session 并发，每 session 顺序做 N 轮对话
     const sessions = [];
     const sessionsPerModelTarget = Math.ceil(concurrency / (models.length || 1));
     let topicIdx = 0;
 
-    if (isBurst) {
-      // 独立请求模式：每个 worker 不断发请求，直到时间到
-      // sessions 作为 worker 标识，worker 从题库循环取问题
-      for (let w = 0; w < concurrency; w++) {
+    for (const model of models) {
+      for (let s = 0; s < sessionsPerModelTarget; s++) {
+        const topic = CONVERSATION_TOPICS[topicIdx % CONVERSATION_TOPICS.length];
+        const sid = model.slice(0, 12) + "-s" + s + "-" + Math.random().toString(36).slice(2, 5);
         sessions.push({
-          model: models[w % models.length],
-          sessionId: "burst-" + w,
-          identity: makeIdentity(w),   // 每个 worker 固定一个客户端身份
-          system: "You are a helpful assistant. Be concise.",
-          turns: [], // 空 turns 表示独立请求模式
-          topic: "burst",
+          model,
+          sessionId: sid,
+          identity: makeIdentity(topicIdx),
+          system: topic.system + " [SessionID: " + sid + "]",
+          turns: topic.turns.slice(0, rounds),
+          topic: topic.topic,
         });
-      }
-    } else {
-      // 连续对话模式
-      for (const model of models) {
-        for (let s = 0; s < sessionsPerModelTarget; s++) {
-          const topic = CONVERSATION_TOPICS[topicIdx % CONVERSATION_TOPICS.length];
-          const sid = model.slice(0, 12) + "-s" + s + "-" + Math.random().toString(36).slice(2, 5);
-          const systemMsg = topic.system + " [SessionID: " + sid + "]";
-          sessions.push({
-            model,
-            sessionId: sid,
-            identity: makeIdentity(topicIdx),   // 每个会话固定一个客户端身份
-            system: systemMsg,
-            turns: topic.turns.slice(0, rounds),
-            topic: topic.topic,
-          });
-          topicIdx++;
-        }
+        topicIdx++;
       }
     }
 
-    // 随机打乱
     for (let i = sessions.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [sessions[i], sessions[j]] = [sessions[j], sessions[i]];
     }
 
-    console.log("[压测] " + (isBurst ? "独立请求" : "连续对话") + " " + sessions.length + " 个会话, 并发 " + concurrency + (isBurst ? "" : " 每会话最多 " + rounds + " 轮"));
+    console.log("[压测] 连续对话 " + sessions.length + " 个会话, 并发 " + concurrency + " 每会话最多 " + rounds + " 轮");
 
     const sessionQueue = [...sessions];
     this._activeSessions = sessions;
@@ -1423,7 +1414,13 @@ const requestHandler = function(req, res) {
   if (pathname === "/api/stop" && req.method === "POST") {
     engine.running = false;
     engine.stopRequested = true;
-    // 立即中止进行中的请求
+    // 批量/RPM 模式：abort 所有 in-flight 请求
+    if (engine._rpmControllers) {
+      for (const ctrl of engine._rpmControllers) {
+        try { ctrl.abort(); } catch (e) {}
+      }
+    }
+    // 连续对话模式：abort 每个 session 的请求
     if (engine._activeSessions) {
       for (const session of engine._activeSessions) {
         if (session._currentController) {
@@ -1434,7 +1431,6 @@ const requestHandler = function(req, res) {
           session._currentTimer = null;
         }
         session._currentController = null;
-        // 直接 destroy 原生 http 请求的 socket
         if (session._currentReq) {
           try { session._currentReq.destroy(); } catch (e) {}
           session._currentReq = null;
