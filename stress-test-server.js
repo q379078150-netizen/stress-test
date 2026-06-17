@@ -41,6 +41,7 @@ function sanitizeConfig(config) {
     roundsPerSession: Number(config.roundsPerSession) || 0,
     timeout: Number(config.timeout) || 0,
     models: Array.isArray(config.models) ? config.models : [],
+    imageSize: config.imageSize || "1024x1024",
   };
 }
 
@@ -51,11 +52,12 @@ function normalizeConfig(config) {
     concurrency: Math.max(1, Number(config.concurrency) || 1),
     durationSeconds: Math.max(1, Number(config.durationSeconds) || 20),
     targetRpm: Math.max(0, Number(config.targetRpm) || 0),
-    rpmCache: !!config.rpmCache,   // RPM 模式：是否走缓存多轮对话（用户到达率模型）
+    rpmCache: !!config.rpmCache,
     roundsPerSession: Math.max(1, Number(config.roundsPerSession) || 6),
-    timeout: Math.max(1000, Number(config.timeout) || 30000),
+    timeout: Math.max(1000, Number(config.timeout) || 120000),
     mode: String(config.mode || "burst").trim(),
     maxTokens: Math.max(5, Number(config.maxTokens) || (config.mode === 'conversation' ? 20 : 5)),
+    imageSize: config.imageSize || "1024x1024",
     models: [...new Set((Array.isArray(config.models) ? config.models : []).map(function(model) {
       return String(model || "").trim();
     }).filter(Boolean))],
@@ -69,6 +71,21 @@ function saveReportToDisk(report) {
   fs.writeFileSync(filePath, JSON.stringify(report, null, 2), "utf8");
   return filePath;
 }
+
+// ============================================================
+// 图片生成压测 prompt 池
+// 原则：最短英文名词，token 消耗极低（1-2 tokens），安全无风险
+// ============================================================
+const IMAGE_PROMPTS = [
+  "a cat",
+  "a dog",
+  "a tree",
+  "a flower",
+  "a mountain",
+  "a lake",
+  "a bird",
+  "a fish",
+];
 
 // ============================================================
 // 简短真实语句池 — 模拟真人随手发的短句（替代 "hi"，不易被识别为压测）
@@ -186,9 +203,46 @@ class StressTestEngine {
     const rounds = roundsPerSession || (isBurst ? 1 : 6);
     const maxTok = maxTokens || (isBurst ? 20 : 150);
 
-    // RPM 开环模式：按固定速率发射，不等返回（模拟真实用户流量）
+    // RPM 开环模式
     if (mode === "rpm") {
       await this.rpmOpenLoop(config);
+      this.endTime = Date.now();
+      this.running = false;
+      this.stopRequested = false;
+      const report = this.generateReport();
+      try {
+        this.reportPath = saveReportToDisk(report);
+        report.reportPath = this.reportPath;
+      } catch (e) {
+        report.reportSaveError = e.message;
+        console.error("[压测报告保存失败]", e.message);
+      }
+      this.lastReport = report;
+      return this.lastReport;
+    }
+
+    // 图片生成模式 — 闭环并发，每 worker 循环调 /v1/images/generations
+    if (mode === "image") {
+      const imageSize = config.imageSize || "1024x1024";
+      const durationMs = (durationSeconds || 20) * 1000;
+      const self = this;
+
+      const workers = [];
+      for (let w = 0; w < concurrency; w++) {
+        workers.push((async function(wIdx) {
+          const identity = makeIdentity(wIdx);
+          const model = models[wIdx % models.length];
+          while (self.running) {
+            const prompt = IMAGE_PROMPTS[Math.floor(Math.random() * IMAGE_PROMPTS.length)];
+            await self.fireImageGeneration(baseUrl, apiKey, model, prompt, imageSize, config.timeout, identity);
+          }
+        })(w));
+      }
+
+      const stopTimer = setTimeout(function() { self.running = false; }, durationMs);
+      await Promise.all(workers);
+      clearTimeout(stopTimer);
+
       this.endTime = Date.now();
       this.running = false;
       this.stopRequested = false;
@@ -300,12 +354,14 @@ class StressTestEngine {
   async rpmOpenLoop(config) {
     const { baseUrl, apiKey, targetRpm, durationSeconds, models, timeout, maxTokens, rpmCache, roundsPerSession } = config;
     const maxTok = maxTokens || 20;
-    const rps = targetRpm / 60;                 // 每秒目标速率
+    const rps = targetRpm / 60;
     const intervalMs = rps > 0 ? 1000 / rps : 1000;
     const durationMs = (durationSeconds || 20) * 1000;
     const deadline = this.startTime + durationMs;
     const burstQuestions = SHORT_MSGS;
     const rounds = rpmCache ? Math.max(1, roundsPerSession || 4) : 1;
+    const isImage = config.mode === "image";
+    const imageSize = config.imageSize || "1024x1024";
 
     let launched = 0;
     const inflightPromises = new Set();
@@ -321,7 +377,10 @@ class StressTestEngine {
       self.arrivals = launched;   // 到达单元数：缓存模式=用户数，否则=请求数
 
       let p;
-      if (rpmCache) {
+      if (isImage) {
+        const prompt = IMAGE_PROMPTS[launched % IMAGE_PROMPTS.length];
+        p = self.fireImageGeneration(baseUrl, apiKey, model, prompt, imageSize, timeout, identity);
+      } else if (rpmCache) {
         const sid = "rpmuser-" + launched + "-" + identity.clientId;
         const session = {
           model: model,
@@ -609,6 +668,83 @@ class StressTestEngine {
       if (!this.modelStats[model]) {
         this.modelStats[model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {} };
       } else { this.modelStats[model].fail++; }
+    } finally {
+      this.inflight--;
+    }
+  }
+
+  // ============================================================
+  // 图片生成单次请求
+  // 成本最小化：n=1, size=1024x1024(最小), quality=low(最低档)
+  // 不存储 base64 图片数据，只判断成功/失败
+  // 安全：prompt 仅用极短名词，绝对不触发内容审核
+  // ============================================================
+  async fireImageGeneration(baseUrl, apiKey, model, prompt, imageSize, timeout, identity) {
+    const start = Date.now();
+    this.totalSent++;
+    this.inflight++;
+    if (this.inflight > this.peakInflight) this.peakInflight = this.inflight;
+
+    const fakeSession = { model: model, sessionId: identity.clientId, identity: identity };
+
+    try {
+      const body = JSON.stringify({
+        model: model,
+        prompt: prompt,
+        n: 1,
+        size: imageSize || "1024x1024",
+        quality: "low",
+      });
+
+      const headers = {
+        "Authorization": "Bearer " + apiKey,
+        "Content-Type": "application/json",
+        "User-Agent": identity.ua,
+        "X-Client-Id": identity.clientId,
+      };
+
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), timeout || 120000);
+      if (this._rpmControllers) this._rpmControllers.add(ctrl);
+
+      const res = await fetch(baseUrl + "/v1/images/generations", {
+        method: "POST", headers: headers, body: body, signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      if (this._rpmControllers) this._rpmControllers.delete(ctrl);
+      const ttfb = Date.now() - start;
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        let errData; try { errData = JSON.parse(errText); } catch (e) { errData = null; }
+        const errMsg = (errData && errData.error && errData.error.message) || "HTTP " + res.status;
+        this.fail++;
+        if (res.status === 429) this.rateLimited++;
+        this.totalDone++;
+        this.allLatencies.push(Date.now() - start);
+        this.errors.push({ model: model, turn: 1, error: errMsg, status: res.status, time: Date.now() });
+        this._ensureModelStat(model);
+        return;
+      }
+
+      // 读取响应，仅取 data[0] 是否存在，不保留 b64_json 内容
+      const json = await res.json().catch(() => null);
+      this.totalDone++;
+
+      if (json && json.data && json.data.length > 0) {
+        this.handleSuccess(fakeSession, 1, start, ttfb, "ok", {});
+      } else {
+        this.fail++;
+        this._ensureModelStat(model);
+        this.errors.push({ model: model, turn: 1, error: "空响应", status: 200, time: Date.now() });
+      }
+    } catch (e) {
+      if (!this.running || this.stopRequested) { this.totalDone++; return; }
+      this.fail++;
+      this.totalDone++;
+      this.allLatencies.push(Date.now() - start);
+      this.errors.push({ model: model, turn: 1, error: e.name === "AbortError" ? "timeout" : e.message, time: Date.now() });
+      this._ensureModelStat(model);
     } finally {
       this.inflight--;
     }
@@ -1111,7 +1247,9 @@ class StressTestEngine {
     const equivalentRpm = (this.config.mode !== "rpm" && avgSec > 0)
       ? Math.round((this.config.concurrency || 0) / avgSec * 60) : 0;
     const modeLabel = this.config.mode === "rpm" ? "RPM 开环压测"
-      : this.config.mode === "conversation" ? "连续对话压测" : "独立请求压测";
+      : this.config.mode === "conversation" ? "连续对话压测"
+      : this.config.mode === "image" ? "图片生成压测"
+      : "独立请求压测";
 
     return {
       runId: this.runId,

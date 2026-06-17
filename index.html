@@ -145,7 +145,22 @@ h1 .icon { font-size: 24px; }
         <option value="burst" selected>独立请求 (高QPS)</option>
         <option value="conversation">连续对话 (Cache测试)</option>
         <option value="rpm">RPM 开环 (模拟真实流量)</option>
+        <option value="image">图片生成 (image-gen)</option>
       </select>
+    </div>
+  </div>
+  <!-- 图片生成专属参数 -->
+  <div class="form-inline" style="margin-top:12px" id="imageOpts" style="display:none">
+    <div class="form-group">
+      <label>图片尺寸</label>
+      <select id="imageSize">
+        <option value="1024x1024" selected>1024×1024（最低费用）</option>
+        <option value="1536x1024">1536×1024</option>
+        <option value="1024x1536">1024×1536</option>
+      </select>
+    </div>
+    <div class="form-group" style="padding-top:22px">
+      <span style="font-size:12px;color:#8b949e">Prompt 自动从安全词库取（极短英文名词），quality=low，n=1，图片数据不落盘</span>
     </div>
   </div>
   <div class="form-inline" style="margin-top:16px">
@@ -326,7 +341,10 @@ function renderModelList() {
     html += '<label class="model-item">';
     html += '<input type="checkbox" value="' + m.id + '" ' + (checked ? "checked" : "") + ' onchange="updateCount()">';
     html += m.id;
-    if (!m.isChat) html += ' <span style="color:#484f58;font-size:10px">非对话</span>';
+    if (!m.isChat) {
+      var tag = m.id.match(/^(gpt-image|dall-e|sora)/) ? "图片生成" : "非对话";
+      html += ' <span style="color:#484f58;font-size:10px">' + tag + '</span>';
+    }
     html += '</label>';
   });
   grid.innerHTML = html;
@@ -377,11 +395,12 @@ var _activeConfig = null;
 function onModeChange() {
   var mode = $("mode").value;
   var isRpm = (mode === "rpm");
+  var isImage = (mode === "image");
   var rpmCacheOn = isRpm && $("rpmCache") && $("rpmCache").checked;
-  // 轮数选项：连续对话模式，或 RPM+缓存模式 时显示
   document.getElementById("convOpts").style.display = (mode === "conversation" || rpmCacheOn) ? "grid" : "none";
   document.getElementById("rpmGroup").style.display = isRpm ? "block" : "none";
   document.getElementById("concurrencyGroup").style.display = isRpm ? "none" : "block";
+  document.getElementById("imageOpts").style.display = isImage ? "grid" : "none";
   saveDraft();
 }
 
@@ -406,22 +425,26 @@ function start() {
   };
   if (mode === "conversation") {
     config.roundsPerSession = parseInt($("rounds").value) || 6;
-    config.maxTokens = 150; // 连续对话固定 150
+    config.maxTokens = 150;
   } else if (mode === "rpm") {
     config.targetRpm = parseInt($("targetRpm").value) || 0;
-    config.concurrency = 1;       // RPM 开环模式不使用并发参数
+    config.concurrency = 1;
     config.rpmCache = $("rpmCache").checked;
     if (config.rpmCache) {
       config.roundsPerSession = parseInt($("rounds").value) || 4;
-      config.maxTokens = 150;     // 缓存对话固定 150
+      config.maxTokens = 150;
     } else {
       config.roundsPerSession = 1;
       config.maxTokens = 20;
     }
     if (config.targetRpm < 1) return alert("请填写目标 RPM");
+  } else if (mode === "image") {
+    config.imageSize = $("imageSize").value || "1024x1024";
+    config.maxTokens = 5;
+    config.timeout = 120000;  // 图片生成最长 2 分钟
   } else {
     config.roundsPerSession = 1;
-    config.maxTokens = 20;  // 独立请求固定 20
+    config.maxTokens = 20;
   }
 
   if (!config.baseUrl || !config.apiKey) return alert("请填写 Base URL 和 API Key");
@@ -442,6 +465,8 @@ function start() {
     if (res.error) { alert(res.error); resetUI(); return; }
     var runLabel = mode === "rpm"
       ? ("RPM 开环 " + config.targetRpm + (config.rpmCache ? " 用户/分 缓存对话" : " 请求/分") + " " + config.durationSeconds + "s")
+      : mode === "image"
+      ? ("图片生成 " + config.concurrency + "并发 " + config.imageSize + " " + config.durationSeconds + "s")
       : ((mode === "burst" ? "独立请求" : "连续对话") + " " + config.concurrency + "并发 " + config.durationSeconds + "s");
     setRunningState(config, runLabel);
     clearInterval(pollTimer);
@@ -529,7 +554,9 @@ function showReport() {
     h += '<div class="report-header">';
     h += '<div class="report-meta"><div style="font-size:14px;font-weight:600;color:#e6edf3;margin-bottom:4px">📋 ' + (reportLabel || "压测报告") + '</div>';
     var headerLine = '模型 <strong>' + models + '</strong> · ';
-    if (s.targetRpm) {
+    if (d.testMode === "图片生成压测") {
+      headerLine += '图片生成 · 尺寸 <strong>' + (d.config.imageSize || "1024x1024") + '</strong> · quality=low · 并发 <strong>' + s.concurrency + '</strong>';
+    } else if (s.targetRpm) {
       headerLine += '目标 <strong>' + s.targetRpm + ' rpm</strong> · 实际 <strong>' + (s.actualRpm || 0) + ' rpm</strong> · 峰值在途 <strong>' + (s.peakInflight || 0) + '</strong>';
     } else {
       headerLine += '并发 <strong>' + s.concurrency + '</strong>';
@@ -555,14 +582,19 @@ function showReport() {
     h += '<div class="metric-box"><div class="val val-ok">' + s.success + '</div><div class="lbl">成功</div></div>';
     h += '<div class="metric-box"><div class="val val-err">' + s.fail + '</div><div class="lbl">失败</div></div>';
     h += '<div class="metric-box"><div class="val val-warn">' + (s.rateLimited || 0) + '</div><div class="lbl">限流(429)</div></div>';
-    h += '<div class="metric-box"><div class="val">' + s.qps + '</div><div class="lbl">QPS</div></div>';
-    if (s.targetRpm) {
+    h += '<div class="metric-box"><div class="val">' + s.qps + '</div><div class="lbl">' + (d.testMode === "图片生成压测" ? "图/秒" : "QPS") + '</div></div>';
+    if (d.testMode === "图片生成压测") {
+      var ipm = (parseFloat(s.qps) * 60).toFixed(1);
+      h += '<div class="metric-box"><div class="val">' + ipm + '</div><div class="lbl">图/分钟</div></div>';
+    } else if (s.targetRpm) {
       h += '<div class="metric-box"><div class="val">' + (s.actualRpm || 0) + '</div><div class="lbl">实际RPM</div></div>';
       h += '<div class="metric-box"><div class="val val-warn">' + (s.peakInflight || 0) + '</div><div class="lbl">峰值在途并发</div></div>';
     } else if (s.equivalentRpm) {
       h += '<div class="metric-box"><div class="val">' + s.equivalentRpm + '</div><div class="lbl">等效RPM</div></div>';
     }
-    h += '<div class="metric-box"><div class="val val-warn">' + s.cacheHitRate + '</div><div class="lbl">Cache 命中率</div></div>';
+    if (d.testMode !== "图片生成压测") {
+      h += '<div class="metric-box"><div class="val val-warn">' + s.cacheHitRate + '</div><div class="lbl">Cache 命中率</div></div>';
+    }
     h += '<div class="metric-box"><div class="val">' + s.conversationsDone + '</div><div class="lbl">会话完成</div></div>';
     h += '</div>';
 
