@@ -123,6 +123,10 @@ const CONVERSATION_TOPICS = [
       "还有类似的吗",
       "哪部最经典",
       "适合周末看吗",
+      "主演是谁",
+      "豆瓣评分多少",
+      "有续集吗",
+      "适合和家人一起看吗",
       "谢谢",
     ],
   },
@@ -143,6 +147,27 @@ const UA_POOL = [
   "curl/8.4.0",
 ];
 
+// 把 idx 派生成一个稳定的、真实用户风格的 UUID v4 字符串（同一 idx 结果一致）
+// 真实客户端的 metadata.user_id 通常是 UUID/哈希，不是 "session-1" 这种压测味的串
+function makeUserId(idx) {
+  // 基于 idx 的确定性伪随机（xorshift），生成 32 个 hex 字符，组装成 UUID v4 格式
+  let x = (idx + 1) * 2654435761 >>> 0;   // Knuth 乘法散列做种子
+  let hex = "";
+  while (hex.length < 32) {
+    x ^= x << 13; x >>>= 0;
+    x ^= x >> 17;
+    x ^= x << 5;  x >>>= 0;
+    hex += x.toString(16).padStart(8, "0");
+  }
+  hex = hex.slice(0, 32);
+  // UUID v4 布局：第13位固定 4，第17位取 8/9/a/b
+  const variant = "89ab"[parseInt(hex[16], 16) % 4];
+  return (
+    hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-4" + hex.slice(13, 16) +
+    "-" + variant + hex.slice(17, 20) + "-" + hex.slice(20, 32)
+  );
+}
+
 // 为第 idx 个 worker/session 生成一个稳定身份（同一 idx 多次调用结果一致）
 function makeIdentity(idx) {
   const ua = UA_POOL[idx % UA_POOL.length];
@@ -151,6 +176,7 @@ function makeIdentity(idx) {
   return {
     ua: ua,
     clientId: clientId,
+    userId: makeUserId(idx),    // 真实用户风格 UUID，用于 metadata.user_id 粘性路由
   };
 }
 
@@ -164,6 +190,7 @@ class StressTestEngine {
 
   reset() {
     this.running = false;
+    this._stopNewSessions = false;   // 连续对话(b)：到点后停止取新会话，但存量会话做满全部轮
     this.startTime = null;
     this.endTime = null;
     this.config = {};
@@ -303,20 +330,11 @@ class StressTestEngine {
     }
 
     const durationMs = (durationSeconds || 20) * 1000;
+    // (b) 到点：不再从队列取新 session，但让正在进行的 session 做满全部轮数，不 abort。
+    // 只设标志，不动 this.running，也不 abort 在途请求 —— 每个请求自身有 timeout 兜底。
+    // 代价：总时长可能超过设定时长（等存量会话各自做满全部轮）。手动 /api/stop 仍可强停。
     const stopTimer = setTimeout(() => {
-      this.running = false;
-      if (this._activeSessions) {
-        for (const session of this._activeSessions) {
-          if (session._currentController) {
-            try { session._currentController.abort(); } catch (e) {}
-          }
-          if (session._currentTimer) {
-            clearTimeout(session._currentTimer);
-            session._currentTimer = null;
-          }
-          session._currentController = null;
-        }
-      }
+      this._stopNewSessions = true;
     }, durationMs);
 
     await Promise.all(workers);
@@ -359,29 +377,51 @@ class StressTestEngine {
     // 记录所有在途请求的 AbortController，硬停时立即中止
     this._rpmControllers = new Set();
 
-    // 发射一个单元（用户或单请求）——不阻塞发射节拍
+    // 缓存模式：维护用户池。pendingUsers 是「已准备好、等着发下一轮」的用户队列。
+    // 每个节拍取队首用户发一轮；该轮返回后若还有下一轮，把用户重新入队；做满轮数或失败则退休。
+    // 队列空了就造一个新用户。这样发射单位 = 单轮请求 → targetRpm 就是真实请求/分。
     const self = this;
+    const pendingUsers = [];
+    let userSeq = 0;
+    function makeNewUser() {
+      const identity = makeIdentity(userSeq);
+      const model = models[userSeq % models.length];
+      const sid = "rpmuser-" + userSeq + "-" + identity.clientId;
+      userSeq++;
+      return {
+        model: model,
+        sessionId: sid,
+        identity: identity,
+        system: "You are a helpful assistant. Be concise. [SessionID: " + sid + "]",
+        turns: CONVERSATION_TOPICS[0].turns.slice(0, rounds),
+        msgs: [],
+        turnNum: 0,
+        cacheBreak: "CB-" + sid,   // 同一用户多轮 cachePad 后缀一致 → 前缀可缓存
+      };
+    }
+
+    // 发射一个单元（缓存模式=单轮请求；其它=单请求/单图）——不阻塞发射节拍
     function fireOne() {
-      const identity = makeIdentity(launched);
-      const model = models[launched % models.length];
       launched++;
-      self.arrivals = launched;   // 到达单元数：缓存模式=用户数，否则=请求数
+      self.arrivals = launched;   // 缓存模式下 = 真实请求数（每节拍一轮）
 
       let p;
       if (isImage) {
+        const identity = makeIdentity(launched);
+        const model = models[launched % models.length];
         const prompt = IMAGE_PROMPTS[launched % IMAGE_PROMPTS.length];
         p = self.fireImageGeneration(baseUrl, apiKey, model, prompt, imageSize, timeout, identity);
       } else if (rpmCache) {
-        const sid = "rpmuser-" + launched + "-" + identity.clientId;
-        const session = {
-          model: model,
-          sessionId: sid,
-          identity: identity,
-          system: "You are a helpful assistant. Be concise. [SessionID: " + sid + "]",
-          turns: CONVERSATION_TOPICS[0].turns.slice(0, rounds),
-        };
-        p = self.runCachedConversation(session, baseUrl, apiKey, timeout, maxTokens || 150);
+        // 取一个待发用户（队空则造新用户）
+        const user = pendingUsers.shift() || makeNewUser();
+        p = self.fireCachedTurn(user, baseUrl, apiKey, timeout, maxTokens || 150)
+          .then(function(hasNext) {
+            // 本轮成功且还有下一轮 → 用户重新入队，等下个节拍继续；否则退休（不入队）
+            if (hasNext && self.running) pendingUsers.push(user);
+          });
       } else {
+        const identity = makeIdentity(launched);
+        const model = models[launched % models.length];
         const q = burstQuestions[Math.floor(Math.random() * burstQuestions.length)];
         p = self.fireOneOpenLoop(baseUrl, apiKey, model, q, maxTok, timeout, identity);
       }
@@ -407,22 +447,156 @@ class StressTestEngine {
     // 发射阶段结束时间（用于精准计算达成速率，不被收尾时间稀释）
     this.launchEndTime = Date.now();
 
-    // 到点：硬停。给在途请求 2 秒宽限收尾，超时一律 abort
-    const GRACE_MS = 2000;
-    const graceEnd = Date.now() + GRACE_MS;
-    while (inflightPromises.size > 0 && Date.now() < graceEnd && this.running) {
+    // 收尾（drain）：不再发射新请求，但等所有已发出的在途请求自然跑完，
+    // 不主动 abort —— 让每个请求都拿到 success/fail 结果，保证 总数 = 成功 + 失败 闭合。
+    // 每个请求自身带 timeout（前端设的，默认 30s），所以 drain 不会无限等；
+    // 再加一个总安全上限（单请求 timeout + 5s 缓冲）兜底，极端卡死才强制中止。
+    // 注意：drain 期间保持 this.running = true，否则请求内部的流式循环会提前 destroy。
+    const DRAIN_CAP_MS = (timeout || 30000) + 5000;
+    const drainStart = Date.now();
+    while (inflightPromises.size > 0 && this.running && (Date.now() - drainStart) < DRAIN_CAP_MS) {
       await new Promise(function(r) { setTimeout(r, 100); });
     }
-    // 仍未收尾的，强制中止
+    // 极端情况：超过安全上限仍有在途，强制中止兜底
     for (const ctrl of this._rpmControllers) {
       try { ctrl.abort(); } catch (e) {}
     }
-    // 标记停止，让会话内部的轮次循环不再继续
     const wasRunning = this.running;
     this.running = false;
     await Promise.allSettled([...inflightPromises]);
     this.running = wasRunning;   // 恢复（外层 run 会再设 false）
     this._rpmControllers = null;
+  }
+
+  // 发送缓存对话中的「单一轮次」（RPM 缓存模式按请求节拍发射用）
+  // user 是一个跨轮持续的状态对象：{ model, sessionId, identity, system, turns, msgs, turnNum, cacheBreak }
+  // 每次调用发 user.turns[user.turnNum] 这一轮，成功则把 assistant 回复 push 进 user.msgs，turnNum++
+  // 返回 true=本轮成功且还有下一轮，false=失败或已是最后一轮（用户应退休）
+  async fireCachedTurn(user, baseUrl, apiKey, timeout, maxTok) {
+    this.inflight++;
+    if (this.inflight > this.peakInflight) this.peakInflight = this.inflight;
+    try {
+      const userMsg = user.turns[user.turnNum];
+      if (userMsg === undefined) return false;
+      const turnNum = user.turnNum + 1;   // 1-based 给报告用
+      user.msgs.push({ role: "user", content: userMsg });
+      const start = Date.now();
+      this.totalSent++;
+
+      const cacheHeaders = {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+        "User-Agent": user.identity.ua,
+        "X-Client-Id": user.identity.clientId,
+      };
+
+      try {
+        const cachePad = "CACHE_PADDING_" + user.cacheBreak + "X".repeat(4000);
+        const body = JSON.stringify({
+          model: user.model,
+          system: [
+            { type: "text", text: user.system, cache_control: { type: "ephemeral" } },
+            { type: "text", text: cachePad, cache_control: { type: "ephemeral" } }
+          ],
+          messages: user.msgs,
+          max_tokens: maxTok,
+          metadata: { user_id: user.identity.userId },   // 粘性路由
+          stream: true,
+        });
+
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), timeout || 30000);
+        if (this._rpmControllers) this._rpmControllers.add(ctrl);
+        const parsed = url.parse(baseUrl + "/v1/messages");
+        const httpModule = parsed.protocol === "https:" ? require("https") : require("http");
+        const res = await new Promise(function(resolve, reject) {
+          const req = httpModule.request({
+            hostname: parsed.hostname, port: parsed.port, path: parsed.path, method: "POST",
+            headers: Object.assign({ "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }, cacheHeaders),
+          }, function(r) { resolve(r); });
+          req.on("error", function(e) { reject(e); });
+          ctrl.signal.addEventListener("abort", function() { try { req.destroy(); } catch (e) {} });
+          req.write(body); req.end();
+        });
+
+        if (res.statusCode >= 400) {
+          const chunks = [];
+          res.on("data", function(c) { chunks.push(c); });
+          await new Promise(function(resolve) { res.on("end", resolve); });
+          clearTimeout(t);
+          if (this._rpmControllers) this._rpmControllers.delete(ctrl);
+          const errText = Buffer.concat(chunks).toString();
+          let errData; try { errData = JSON.parse(errText); } catch (e) { errData = null; }
+          const errMsg = (errData && errData.error && errData.error.message) || "HTTP " + res.statusCode;
+          this.fail++;
+          if (res.statusCode === 429) this.rateLimited++;
+          this.totalDone++;
+          this.errors.push({ model: user.model, sessionId: user.sessionId, turn: turnNum, error: errMsg, status: res.statusCode, time: Date.now() });
+          this._ensureModelStat(user.model);
+          return false;   // 失败 → 用户退休
+        }
+
+        let ttfb = 0;
+        let fullContent = "";
+        const usage = {};
+        let buffer = "";
+        const self2 = this;
+        res.setEncoding("utf8");
+        await new Promise(function(resolve, reject) {
+          res.on("data", function(chunk) {
+            if (ttfb === 0) ttfb = Date.now() - start;
+            if (!self2.running) { try { res.destroy(); } catch (e) {} return; }
+            buffer += chunk;
+            const parts = buffer.split("\n");
+            buffer = parts.pop();
+            for (const line of parts) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith("data:")) continue;
+              const payload = trimmed.slice(5).trim();
+              if (!payload || payload === "[DONE]") continue;
+              let evt; try { evt = JSON.parse(payload); } catch (e) { continue; }
+              if (evt.type === "message_start" && evt.message && evt.message.usage) {
+                Object.assign(usage, evt.message.usage);
+              } else if (evt.type === "content_block_delta" && evt.delta && evt.delta.text) {
+                fullContent += evt.delta.text;
+              } else if (evt.type === "message_delta" && evt.usage) {
+                Object.assign(usage, evt.usage);
+              }
+            }
+          });
+          res.on("end", resolve);
+          res.on("error", reject);
+        });
+        clearTimeout(t);
+        if (this._rpmControllers) this._rpmControllers.delete(ctrl);
+        if (ttfb === 0) ttfb = Date.now() - start;
+
+        this.totalDone++;
+        if (fullContent.length > 0) {
+          this.handleSuccess({ model: user.model, sessionId: user.sessionId }, turnNum, start, ttfb, fullContent, usage);
+          user.msgs.push({ role: "assistant", content: fullContent });
+          user.turnNum++;
+          // 最后一轮做完 → 整段对话成功
+          if (user.turnNum >= user.turns.length) { this.conversationsDone++; return false; }
+          return true;   // 还有下一轮
+        } else {
+          this.fail++;
+          this.errors.push({ model: user.model, sessionId: user.sessionId, turn: turnNum, error: "空响应", status: 200, time: Date.now() });
+          this._ensureModelStat(user.model);
+          return false;
+        }
+      } catch (e) {
+        if (!this.running || this.stopRequested) { this.totalDone++; return false; }
+        this.fail++; this.totalDone++;
+        this.allLatencies.push(Date.now() - start);
+        this.errors.push({ model: user.model, sessionId: user.sessionId, turn: turnNum, error: e.name === "AbortError" ? "timeout" : e.message, time: Date.now() });
+        this._ensureModelStat(user.model);
+        return false;
+      }
+    } finally {
+      this.inflight--;
+    }
   }
 
   // 一段完整的多轮缓存对话（用于 RPM 缓存模式的每个到达用户）
@@ -460,6 +634,7 @@ class StressTestEngine {
             ],
             messages: msgs,
             max_tokens: maxTok,
+            metadata: { user_id: session.identity.userId },   // 粘性路由：同会话固定真实风格 user_id → 命中缓存
             stream: true,                       // 流式：SSE
           });
 
@@ -679,13 +854,16 @@ class StressTestEngine {
     const fakeSession = { model: model, sessionId: identity.clientId, identity: identity };
 
     try {
-      const body = JSON.stringify({
-        model: model,
-        prompt: prompt,
-        n: 1,
-        size: imageSize || "1024x1024",
-        quality: "low",
-      });
+      // gpt-image-2 支持 "low"/"medium"/"high"/"auto"
+      // dall-e-3 只支持 "standard"/"hd"
+      // dall-e-2 不支持 quality 参数
+      const isDallE3 = /dall-e-3/i.test(model);
+      const isDallE2 = /dall-e-2/i.test(model);
+      const imageQuality = isDallE3 ? "standard" : isDallE2 ? undefined : "low";
+
+      const bodyObj = { model, prompt, n: 1, size: imageSize || "1024x1024" };
+      if (imageQuality !== undefined) bodyObj.quality = imageQuality;
+      const body = JSON.stringify(bodyObj);
 
       const headers = {
         "Authorization": "Bearer " + apiKey,
@@ -760,6 +938,8 @@ class StressTestEngine {
         session = sessionsRef[workerIdx];
         if (!session) break;
       } else {
+        // (b) 到点后不再取新会话，但本 worker 上一个会话已做满全部轮次才会走到这里
+        if (this._stopNewSessions) break;
         session = queue.shift();
         if (!session) break;
       }
@@ -900,7 +1080,7 @@ class StressTestEngine {
         this.totalSent++;
 
         try {
-          // Anthropic 原生 Messages API — 非流式，确保 cache 数据不丢失
+          // Anthropic 原生 Messages API — 流式 SSE
           // 每个 session 的 cachePad 带唯一后缀，确保独立缓存 epoch
           var cachePad = "CACHE_PADDING_" + cacheBreak + "X".repeat(4000);
           const body = JSON.stringify({
@@ -911,6 +1091,8 @@ class StressTestEngine {
             ],
             messages: msgs,
             max_tokens: maxTok,
+            metadata: { user_id: (session.identity && session.identity.userId) || session.sessionId },   // 粘性路由：同会话固定真实风格 user_id → 命中缓存
+            stream: true,
           });
 
           // 用原生 http/https 发请求，确保 Content-Length + 复杂 JSON 不被截断
@@ -941,18 +1123,16 @@ class StressTestEngine {
             req.write(body);
             req.end();
           });
-          clearTimeout(t);
-          session._currentController = null;
-          session._currentTimer = null;
-          session._currentReq = null;
 
-          const ttfb = Date.now() - start;
+          let ttfb = 0;
 
           if (res.statusCode >= 400) {
             if (!this.running) { sessionOk = false; break; }
             const chunks = [];
             res.on("data", function(c) { chunks.push(c); });
             await new Promise(function(resolve) { res.on("end", resolve); });
+            clearTimeout(t);
+            session._currentController = null; session._currentTimer = null; session._currentReq = null;
             if (!this.running) { sessionOk = false; break; }
             const errText = Buffer.concat(chunks).toString();
             let errData;
@@ -977,24 +1157,50 @@ class StressTestEngine {
             break;
           }
 
-          // 读取完整响应
-          const resChunks = [];
-          res.on("data", function(c) { resChunks.push(c); });
-          await new Promise(function(resolve) { res.on("end", resolve); });
-          const text = Buffer.concat(resChunks).toString();
-          const latency = Date.now() - start;
+          // 流式解析 SSE：message_start 带 cache usage，content_block_delta 带文本，message_delta 带 output tokens
+          let fullContent = "";
+          const usage = {};
+          let buffer = "";
+          const self2 = this;
+          res.setEncoding("utf8");
+          await new Promise(function(resolve, reject) {
+            res.on("data", function(chunk) {
+              if (ttfb === 0) ttfb = Date.now() - start;   // 首字节时间
+              if (!self2.running) { try { res.destroy(); } catch (e) {} return; }
+              buffer += chunk;
+              const parts = buffer.split("\n");
+              buffer = parts.pop();
+              for (const line of parts) {
+                const trimmed = line.trim();
+                if (!trimmed.startsWith("data:")) continue;
+                const payload = trimmed.slice(5).trim();
+                if (!payload || payload === "[DONE]") continue;
+                let evt; try { evt = JSON.parse(payload); } catch (e) { continue; }
+                if (evt.type === "message_start" && evt.message && evt.message.usage) {
+                  Object.assign(usage, evt.message.usage);
+                } else if (evt.type === "content_block_delta" && evt.delta && evt.delta.text) {
+                  fullContent += evt.delta.text;
+                } else if (evt.type === "message_delta" && evt.usage) {
+                  Object.assign(usage, evt.usage);
+                }
+              }
+            });
+            res.on("end", resolve);
+            res.on("error", reject);
+          });
+          clearTimeout(t);
+          session._currentController = null;
+          session._currentTimer = null;
+          session._currentReq = null;
+          if (ttfb === 0) ttfb = Date.now() - start;
+
           this.totalDone++;
 
-          let data;
-          try { data = JSON.parse(text); } catch (e) { data = null; }
-
-          if (data && data.content) {
-            const fullContent = data.content.map(function(b) { return b.text || ""; }).join("");
-            const usage = data.usage || {};
+          if (fullContent.length > 0) {
             this.handleSuccess(session, turnNum, start, ttfb, fullContent, usage);
-            msgs.push({ role: "assistant", content: data.content[0].text });
+            msgs.push({ role: "assistant", content: fullContent });
           } else {
-            const errMsg = (data && data.error && data.error.message) || "空响应";
+            const errMsg = "空响应";
             this.fail++;
             this.errors.push({
                   model: session.model, sessionId: session.sessionId,
@@ -1119,11 +1325,10 @@ class StressTestEngine {
     const min = sorted[0] || 0;
     const max = sorted[sorted.length - 1] || 0;
 
-    // 实际发射速率（rpm）：已发出请求数 / 已耗分钟
-    // RPM 实际达成速率：用「发射阶段时长」作分母，不被收尾时间稀释
+    // 实际达成速率（rpm）= 真实发出的请求数 / 发射阶段时长。缓存模式每节拍发一轮，totalSent 即真实请求数。
     const launchMs = this.startTime ? ((this.launchEndTime || Date.now()) - this.startTime) : 0;
     const actualRpm = (this.config.mode === "rpm")
-      ? (launchMs > 0 ? Math.round((this.arrivals / (launchMs / 1000)) * 60) : 0)
+      ? (launchMs > 0 ? Math.round((this.totalSent / (launchMs / 1000)) * 60) : 0)
       : (elapsedMs > 0 ? Math.round((this.totalSent / (elapsedMs / 1000)) * 60) : 0);
     // 等效 rpm（并发模式）：Little's 法则 并发 ÷ 平均延迟(秒) × 60
     const avgSec = avg / 1000;
@@ -1230,10 +1435,11 @@ class StressTestEngine {
     const successRate = this.totalDone > 0 ? ((this.success / this.totalDone) * 100).toFixed(1) : "0";
 
     const avgSec = avg / 1000;
-    // RPM 实际达成速率：用「发射阶段时长」作分母，不被收尾时间稀释
+    // RPM 实际达成速率 = 真实发出的请求数 / 发射阶段时长。
+    // 缓存模式下每节拍发一轮，totalSent 即真实请求数，故 actualRpm 永远是「真实请求/分」，与 targetRpm 同语义。
     const launchMs = this.startTime ? ((this.launchEndTime || Date.now()) - this.startTime) : 0;
     const actualRpm = (this.config.mode === "rpm")
-      ? (launchMs > 0 ? Math.round((this.arrivals / (launchMs / 1000)) * 60) : 0)
+      ? (launchMs > 0 ? Math.round((this.totalSent / (launchMs / 1000)) * 60) : 0)
       : (elapsedMs > 0 ? Math.round((this.totalSent / (elapsedMs / 1000)) * 60) : 0);
     const equivalentRpm = (this.config.mode !== "rpm" && avgSec > 0)
       ? Math.round((this.config.concurrency || 0) / avgSec * 60) : 0;
@@ -1460,6 +1666,29 @@ const requestHandler = function(req, res) {
   res.writeHead(404, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: "not found" }));
 };
+
+// 每 3 小时清理一次旧压测报告（导出 PDF 后无需保留历史数据）
+const CLEAN_INTERVAL_MS = 3 * 60 * 60 * 1000;
+function cleanOldReports() {
+  try {
+    if (!fs.existsSync(REPORT_DIR)) return;
+    const files = fs.readdirSync(REPORT_DIR);
+    const cutoff = Date.now() - CLEAN_INTERVAL_MS;
+    let removed = 0;
+    for (const f of files) {
+      if (!f.endsWith(".json")) continue;
+      const fp = path.join(REPORT_DIR, f);
+      try {
+        const stat = fs.statSync(fp);
+        if (stat.mtimeMs < cutoff) { fs.unlinkSync(fp); removed++; }
+      } catch (e) {}
+    }
+    if (removed > 0) console.log("[清理] 删除 " + removed + " 个旧报告");
+  } catch (e) {
+    console.error("[清理失败]", e.message);
+  }
+}
+setInterval(cleanOldReports, CLEAN_INTERVAL_MS);
 
 const server = http.createServer(requestHandler);
 const HOST = process.env.HOST || "0.0.0.0";   // 绑定所有网卡，允许局域网访问

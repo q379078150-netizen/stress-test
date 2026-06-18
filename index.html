@@ -127,15 +127,16 @@ h1 .icon { font-size: 24px; }
       <input id="concurrency" type="number" min="1" max="5000" step="1" value="100" placeholder="手动输入，如 200">
     </div>
     <div class="form-group" id="rpmGroup" style="display:none">
-      <label>目标 RPM（每分钟请求数 / 缓存模式下=用户数）</label>
-      <input id="targetRpm" type="number" min="1" max="100000" step="10" value="200" placeholder="如 200">
+      <label>目标 RPM（每分钟真实请求数）</label>
+      <input id="targetRpm" type="number" min="1" max="100000" step="10" value="200" placeholder="如 200" oninput="updateRpmEstimate()">
       <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;cursor:pointer;color:#8b949e">
         <input type="checkbox" id="rpmCache" style="width:auto" onchange="onModeChange()"> 缓存对话模式（每用户做多轮，测缓存命中）
       </label>
+      <div id="rpmEstimate" style="margin-top:8px;font-size:12px;color:#58a6ff;line-height:1.6"></div>
     </div>
     <div class="form-group" id="durationGroup">
       <label>持续时间 (秒)</label>
-      <select id="duration">
+      <select id="duration" onchange="updateRpmEstimate();saveDraft()">
         <option value="10">10</option><option value="20" selected>20</option><option value="30">30</option><option value="60">60</option><option value="120">120</option>
       </select>
     </div>
@@ -171,11 +172,31 @@ h1 .icon { font-size: 24px; }
   <div class="form-inline" style="margin-top:16px" id="convOpts" style="display:none">
     <div class="form-group">
       <label>每会话轮数</label>
-      <select id="rounds">
+      <select id="rounds" onchange="updateRpmEstimate();saveDraft()">
         <option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="8">8</option><option value="10">10</option>
       </select>
     </div>
   </div>
+  <!-- 并发 → RPM 换算器 -->
+  <div style="background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:12px 16px;margin-top:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+    <span style="font-size:12px;color:#8b949e;white-space:nowrap">并发 → RPM 换算</span>
+    <div style="display:flex;align-items:center;gap:8px">
+      <label style="font-size:11px;color:#8b949e;white-space:nowrap">并发数</label>
+      <input id="calcConc" type="number" min="1" value="50" oninput="calcRpmFromConc()"
+        style="width:80px;padding:5px 8px;background:#161b22;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:13px">
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <label style="font-size:11px;color:#8b949e;white-space:nowrap">平均延迟 (s)</label>
+      <input id="calcLatency" type="number" min="0.1" step="0.1" value="5" oninput="calcRpmFromConc()"
+        style="width:70px;padding:5px 8px;background:#161b22;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:13px">
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:11px;color:#8b949e;white-space:nowrap">= </span>
+      <span id="calcRpmOut" style="font-size:20px;font-weight:700;color:#58a6ff">600</span>
+      <span style="font-size:11px;color:#8b949e">RPM</span>
+    </div>
+  </div>
+
   <div class="btn-row">
     <button class="btn btn-primary" id="btnStart" onclick="start()">▶ 开始压测</button>
     <button class="btn btn-danger hidden" id="btnStop" onclick="stop()">⏹ 停止</button>
@@ -226,6 +247,12 @@ function getDraft() {
   } catch (_) {
     return {};
   }
+}
+
+function calcRpmFromConc() {
+  var conc = parseFloat(document.getElementById("calcConc").value) || 1;
+  var lat = parseFloat(document.getElementById("calcLatency").value) || 1;
+  document.getElementById("calcRpmOut").textContent = Math.round(conc / lat * 60).toLocaleString();
 }
 
 function saveDraft(extra) {
@@ -406,7 +433,28 @@ function onModeChange() {
   // 并发数 label
   var concLabel = document.querySelector("#concurrencyGroup label");
   if (concLabel) concLabel.textContent = isBatch ? "并发数（同时发出的请求总数）" : "并发数";
+  updateRpmEstimate();
   saveDraft();
+}
+
+// RPM 模式预估提示：把 目标RPM × 时长 × 轮数 的关系一行讲清楚
+function updateRpmEstimate() {
+  var box = document.getElementById("rpmEstimate");
+  if (!box) return;
+  var mode = $("mode").value;
+  if (mode !== "rpm") { box.textContent = ""; return; }
+  var rpm = parseInt($("targetRpm").value) || 0;
+  var dur = parseInt($("duration").value) || 0;
+  var cacheOn = $("rpmCache") && $("rpmCache").checked;
+  var totalReq = Math.round(rpm * dur / 60);
+  if (rpm <= 0 || dur <= 0) { box.textContent = ""; return; }
+  var html = "约 <b>" + totalReq.toLocaleString() + "</b> 个真实请求（" + rpm + " rpm × " + dur + "s）";
+  if (cacheOn) {
+    var rounds = parseInt($("rounds").value) || 1;
+    var users = rounds > 0 ? Math.max(1, Math.round(totalReq / rounds)) : totalReq;
+    html += "，约 <b>" + users.toLocaleString() + "</b> 个用户 × " + rounds + " 轮";
+  }
+  box.innerHTML = html;
 }
 
 // 初始化时隐藏连续对话选项
