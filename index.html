@@ -222,27 +222,6 @@ h1 .icon { font-size: 24px; }
           <option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="8">8</option><option value="10">10</option>
         </select>
       </div>
-      <div class="form-group">
-        <label>新用户比例 (%)</label>
-        <input id="rpmCacheNewUserRatio" type="number" min="0" max="100" step="1" value="35" oninput="updateRpmEstimate();saveDraft()">
-        <span style="font-size:11px;color:#6e7681;margin-top:4px;display:block">实验① 设为 100：每次都新用户，只看第1轮是否还会读到旧缓存。</span>
-      </div>
-      <div class="form-group">
-        <label>会话长度分布</label>
-        <select id="rpmCacheSessionLengthPreset" onchange="saveDraft()">
-          <option value="realistic" selected>realistic</option>
-          <option value="short">short</option>
-          <option value="sticky">sticky</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>回访间隔分布</label>
-        <select id="rpmCacheReturnIntervalPreset" onchange="saveDraft()">
-          <option value="realistic" selected>realistic</option>
-          <option value="bursty">bursty</option>
-          <option value="slow">slow</option>
-        </select>
-      </div>
     </div>
     <label id="rpmCacheToggleWrap" style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;cursor:pointer;color:#8b949e">
       <input type="checkbox" id="rpmCache" style="width:auto" checked onchange="onModeChange()"> 缓存对话模式（每用户做多轮，测缓存命中）
@@ -630,9 +609,6 @@ function saveDraft(extra) {
     rpmMultiModelMode: $("rpmMultiModelMode") ? $("rpmMultiModelMode").value : "sequential",
     durationSeconds: $("duration").value,
     roundsPerSession: $("rounds").value,
-    rpmCacheNewUserRatio: $("rpmCacheNewUserRatio") ? $("rpmCacheNewUserRatio").value : String(RPM_CACHE_DEFAULT_NEW_USER_RATIO),
-    rpmCacheSessionLengthPreset: $("rpmCacheSessionLengthPreset") ? $("rpmCacheSessionLengthPreset").value : RPM_CACHE_DEFAULT_SESSION_PRESET,
-    rpmCacheReturnIntervalPreset: $("rpmCacheReturnIntervalPreset") ? $("rpmCacheReturnIntervalPreset").value : RPM_CACHE_DEFAULT_RETURN_PRESET,
     mode: $("mode").value,
     contextScale: $("contextScale").value,
     randomParams: $("randomParams").checked,
@@ -663,9 +639,6 @@ function applyConfig(config) {
   if (typeof config.apiKey === "string" && config.apiKey) $("apiKey").value = config.apiKey;
   if (config.concurrency) $("concurrency").value = String(config.concurrency);
   if (config.targetRpm) $("targetRpm").value = String(config.targetRpm);
-  if ($("rpmCacheNewUserRatio")) $("rpmCacheNewUserRatio").value = String(config.rpmCacheNewUserRatio != null ? config.rpmCacheNewUserRatio : RPM_CACHE_DEFAULT_NEW_USER_RATIO);
-  if ($("rpmCacheSessionLengthPreset")) $("rpmCacheSessionLengthPreset").value = config.rpmCacheSessionLengthPreset || RPM_CACHE_DEFAULT_SESSION_PRESET;
-  if ($("rpmCacheReturnIntervalPreset")) $("rpmCacheReturnIntervalPreset").value = config.rpmCacheReturnIntervalPreset || RPM_CACHE_DEFAULT_RETURN_PRESET;
   // 缓存对话模式：每次加载默认勾选（用户要求，忽略旧草稿）；想关可当次手动取消
   $("rpmCache").checked = true;
   if (config.rpmMultiModelMode && $("rpmMultiModelMode")) $("rpmMultiModelMode").value = config.rpmMultiModelMode === "mixed" ? "mixed" : "sequential";
@@ -696,7 +669,7 @@ function applyConfig(config) {
 }
 
 function bindDraftPersistence() {
-  ["baseUrl", "apiKey", "concurrency", "targetRpm", "duration", "rounds", "rpmCacheNewUserRatio", "rpmCacheSessionLengthPreset", "rpmCacheReturnIntervalPreset", "mode", "contextScale", "randomParams", "reportLabel", "modelsManual"].forEach(function(id) {
+  ["baseUrl", "apiKey", "concurrency", "targetRpm", "duration", "rounds", "mode", "contextScale", "randomParams", "reportLabel", "modelsManual"].forEach(function(id) {
     var el = $(id);
     if (!el) return;
     el.addEventListener("change", function() { saveDraft(); });
@@ -929,11 +902,11 @@ function start() {
     config.maxInflight = 0;
     config.concurrency = 1;
     config.rpmCache = $("rpmCache").checked;
+    config.rpmCacheNewUserRatio = RPM_CACHE_DEFAULT_NEW_USER_RATIO;
+    config.rpmCacheSessionLengthPreset = RPM_CACHE_DEFAULT_SESSION_PRESET;
+    config.rpmCacheReturnIntervalPreset = RPM_CACHE_DEFAULT_RETURN_PRESET;
     if (config.rpmCache) {
       config.roundsPerSession = parseInt($("rounds").value) || 4;
-      config.rpmCacheNewUserRatio = clamp(parseInt($("rpmCacheNewUserRatio").value), 0, 100);
-      config.rpmCacheSessionLengthPreset = $("rpmCacheSessionLengthPreset").value || RPM_CACHE_DEFAULT_SESSION_PRESET;
-      config.rpmCacheReturnIntervalPreset = $("rpmCacheReturnIntervalPreset").value || RPM_CACHE_DEFAULT_RETURN_PRESET;
       config.maxTokens = 150;
     } else {
       config.roundsPerSession = 1;
@@ -1209,7 +1182,17 @@ function showReport() {
       var cacheDisplay = s.cacheHitDisplay || s.cacheHitRate || "N/A";
       var warmedCacheDisplay = s.warmedCacheHitDisplay || s.warmedCacheHitRate || "N/A";
       var cacheSmall = '<div style="font-size:11px;color:#8b949e;margin-top:4px">第1轮用于创建缓存，不计入命中率 · 第2轮起当前为 ' + warmedCacheDisplay + '</div>';
-      h += '<div class="metric-box"><div class="val val-warn">' + cacheDisplay + '</div><div class="lbl">Cache 命中率（第2轮起）</div>' + cacheSmall + '</div>';
+      // 加权命中率(token 口径)= 看"命中好不好"主要看这个，跟上游仪表盘同口径
+      var weighted = (s.weightedCacheHitRate != null && s.weightedCacheHitRate !== "N/A") ? (s.weightedCacheHitRate + '%') : "N/A";
+      if (weighted !== "N/A") {
+        var wColor = parseFloat(s.weightedCacheHitRate) >= 60 ? '#3fb950' : (parseFloat(s.weightedCacheHitRate) >= 30 ? '#d29922' : '#f85149');
+        h += '<div class="metric-box"><div class="val" style="color:' + wColor + '">' + weighted + '</div><div class="lbl">加权命中率（按token量，对账上游）</div>'
+          + '<div style="font-size:11px;color:#8b949e;margin-top:4px">命中的缓存token ÷ 全部消耗token · 二值(按请求)为 ' + cacheDisplay + '</div></div>';
+      }
+      h += '<div class="metric-box"><div class="val val-warn">' + cacheDisplay + '</div><div class="lbl">Cache 命中率（第2轮起·按请求）</div>' + cacheSmall + '</div>';
+      if (s.cacheVerdict) {
+        h += '<div class="metric-box" style="flex-basis:100%"><div class="lbl">命中判定</div><div style="font-size:14px;margin-top:4px">' + s.cacheVerdict + '</div></div>';
+      }
     }
     h += '<div class="metric-box"><div class="val">' + s.conversationsDone + '</div><div class="lbl">会话完成</div></div>';
     h += '</div>';
