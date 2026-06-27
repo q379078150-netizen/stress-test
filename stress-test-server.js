@@ -1716,6 +1716,7 @@ class StressTestEngine {
     this.arrivals = 0;      // RPM 开环模式：已到达单元数（缓存模式=用户数，否则=请求数）
     this.launchEndTime = null;  // RPM 发射阶段结束时间
     this.cacheHits = 0;
+    this.turn1Contamination = 0;  // turn-1 出现 cache_read>0 的次数 = 渠道跨会话串缓存信号(正常应为0)
     this.cacheCreateTokens = 0;   // 缓存写入 token 累计（第1轮 cache_creation_input_tokens）
     this.cacheReadTokens = 0;     // 缓存读取 token 累计（后续轮 cache_read_input_tokens）
     this._rawUsageSample = {};    // 每模型首个成功响应的原始 usage 对象（诊断渠道到底回了什么字段）
@@ -2406,8 +2407,12 @@ class StressTestEngine {
     ]);
     this.running = wasRunning;   // 恢复（外层 run 会再设 false）
     this._rpmControllers = null;
-    // 收尾：销毁池中残留用户的 keep-alive 连接，避免 socket 泄漏
-    for (const u of pendingUsers) { if (u && u._agent) { try { u._agent.destroy(); } catch (e) {} u._agent = null; } }
+    // 收尾：销毁池中残留用户的 keep-alive 连接，避免 socket 泄漏。
+    // pendingUsers(legacy 池) + returningUsers(realistic 主池) 都要清——
+    // realistic 模式等待回访的用户结束时拿不到 .then 退休，其 _agent 不清就漏 socket。
+    for (const u of pendingUsers.concat(returningUsers)) {
+      if (u && u._agent) { try { u._agent.destroy(); } catch (e) {} u._agent = null; }
+    }
   }
 
   // 发送缓存对话中的「单一轮次」（RPM 缓存模式按请求节拍发射用）
@@ -4277,15 +4282,20 @@ class StressTestEngine {
       // 不算 hit，但要记录到 perTurnCache
     }
 
+    // 命中只认 turn≥2：turn-1 是缓存「写入」(全新唯一前缀)，永远不该算命中。
+    // turn-1 若返回 cache_read>0 → 渠道在跨会话串缓存(或 usage 造假)，单独记为污染告警，不计进命中。
+    const countedHit = wasCacheHit && turnNum >= 2;
+    if (turnNum === 1 && wasCacheHit) this.turn1Contamination = (this.turn1Contamination || 0) + 1;
+
     this.success++;
     this.latencies.push(latency);
     this.allLatencies.push(latency);
-    if (wasCacheHit) this.cacheHits++;
+    if (countedHit) this.cacheHits++;
 
     const turnKey = "turn" + turnNum;
     if (!this.perTurnCache[turnKey]) this.perTurnCache[turnKey] = { total: 0, hits: 0 };
     this.perTurnCache[turnKey].total++;
-    if (wasCacheHit) this.perTurnCache[turnKey].hits++;
+    if (countedHit) this.perTurnCache[turnKey].hits++;
 
     if (!this.modelStats[session.model]) {
       this.modelStats[session.model] = {
@@ -4297,7 +4307,7 @@ class StressTestEngine {
     ms.success++;
     ms.latencies.push(latency);
     ms.ttfbList.push(ttfbs);
-    if (wasCacheHit) ms.cacheHits++;
+    if (countedHit) ms.cacheHits++;   // 同口径：turn-1 不计命中
     ms.totalPromptTokens += promptTokens;
     ms.totalCompletionTokens += completionTokens;
     ms.cacheCreateTokens = (ms.cacheCreateTokens || 0) + cacheCreate;
@@ -4599,6 +4609,11 @@ class StressTestEngine {
         cacheObserved: cacheObserved,
         cacheCreateTokens: this.cacheCreateTokens,
         cacheReadTokens: this.cacheReadTokens,
+        // 命中可信度信号:
+        // warmSamples = 真正能命中的 turn≥2 请求数。<100 时命中率噪声大,仅供参考。
+        // turn1Contamination = turn-1(全新前缀)却读到缓存的次数,>0 = 渠道跨会话串缓存,命中率被污染。
+        warmSamples: totalCacheOps,
+        turn1Contamination: this.turn1Contamination || 0,
         conversationsDone: this.conversationsDone,
         conversationsFailed: this.conversationsFailed,
       },
