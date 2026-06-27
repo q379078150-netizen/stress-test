@@ -31,9 +31,9 @@ const WORKER_TARGET_THRESHOLD_RPM = Math.max(1, Number(process.env.WORKER_TARGET
 // 文字 RPM 走 worker 分摊的阈值（与图片 300 分开）。低于此值文字仍单机跑，语义/缓存口径不变。
 const WORKER_TEXT_TARGET_THRESHOLD_RPM = Math.max(1, Number(process.env.WORKER_TEXT_TARGET_THRESHOLD_RPM) || 500);
 const WORKER_DEFAULT_MAX_INFLIGHT = Math.max(1, Number(process.env.WORKER_DEFAULT_MAX_INFLIGHT) || 800);
-const RPM_CACHE_DEFAULT_NEW_USER_RATIO = 35;
-const RPM_CACHE_DEFAULT_SESSION_LENGTH_PRESET = "realistic";
-const RPM_CACHE_DEFAULT_RETURN_INTERVAL_PRESET = "realistic";
+const RPM_CACHE_DEFAULT_NEW_USER_RATIO = 0;          // 默认不再持续造新用户：让老用户反复回访读缓存，命中率才反映真实缓存能力
+const RPM_CACHE_DEFAULT_SESSION_LENGTH_PRESET = "sticky";   // 默认多轮会话：写1次缓存、读多次
+const RPM_CACHE_DEFAULT_RETURN_INTERVAL_PRESET = "bursty";  // 默认快速回访：5分钟 TTL 内回来，读得到刚写的缓存
 const RPM_CACHE_DEFAULT_MAX_ROUNDS = 6;
 
 // 进程级持久记忆：「这个 渠道+模型+key 不认 anthropic-beta 头」。
@@ -118,7 +118,7 @@ function sanitizeConfig(config) {
     rpmMultiModelMode: config.rpmMultiModelMode === "mixed" ? "mixed" : "sequential",
     mode: config.mode || "",
     roundsPerSession: Number(config.roundsPerSession) || 0,
-    rpmCacheNewUserRatio: Number(config.rpmCacheNewUserRatio) || RPM_CACHE_DEFAULT_NEW_USER_RATIO,
+    rpmCacheNewUserRatio: Number(config.rpmCacheNewUserRatio) != null && !isNaN(config.rpmCacheNewUserRatio) ? Number(config.rpmCacheNewUserRatio) : RPM_CACHE_DEFAULT_NEW_USER_RATIO,
     rpmCacheSessionLengthPreset: normalizeRpmCacheSessionPreset(config.rpmCacheSessionLengthPreset),
     rpmCacheReturnIntervalPreset: normalizeRpmCacheReturnPreset(config.rpmCacheReturnIntervalPreset),
     rpmCacheMaxRounds: Number(config.rpmCacheMaxRounds) || RPM_CACHE_DEFAULT_MAX_ROUNDS,
@@ -156,7 +156,7 @@ function normalizeConfig(config) {
     rpmCacheTrafficMode: config.rpmCacheTrafficMode === "legacy" ? "legacy" : "realistic",
     rpmMultiModelMode: config.rpmMultiModelMode === "mixed" ? "mixed" : "sequential",
     roundsPerSession: Math.max(1, Number(config.roundsPerSession) || 6),
-    rpmCacheNewUserRatio: Math.max(0, Math.min(100, Number(config.rpmCacheNewUserRatio) || RPM_CACHE_DEFAULT_NEW_USER_RATIO)),
+    rpmCacheNewUserRatio: Math.max(0, Math.min(100, config.rpmCacheNewUserRatio != null ? Number(config.rpmCacheNewUserRatio) : RPM_CACHE_DEFAULT_NEW_USER_RATIO)),
     rpmCacheSessionLengthPreset: normalizeRpmCacheSessionPreset(config.rpmCacheSessionLengthPreset),
     rpmCacheReturnIntervalPreset: normalizeRpmCacheReturnPreset(config.rpmCacheReturnIntervalPreset),
     rpmCacheMaxRounds: Math.max(1, Math.min(10, Number(config.rpmCacheMaxRounds) || Number(config.roundsPerSession) || RPM_CACHE_DEFAULT_MAX_ROUNDS)),
@@ -2229,7 +2229,7 @@ class StressTestEngine {
     const burstQuestions = SHORT_MSGS;
     const rounds = rpmCache ? Math.max(1, roundsPerSession || 4) : 1;
     const rpmCacheRealistic = !!rpmCache && config.rpmCacheTrafficMode !== "legacy";
-    const rpmCacheNewUserRatio = Math.max(0, Math.min(100, Number(config.rpmCacheNewUserRatio) || RPM_CACHE_DEFAULT_NEW_USER_RATIO));
+    const rpmCacheNewUserRatio = Math.max(0, Math.min(100, config.rpmCacheNewUserRatio != null ? Number(config.rpmCacheNewUserRatio) : RPM_CACHE_DEFAULT_NEW_USER_RATIO));
     const isImage = config.mode === "image";
     // 背压：在途上限。>0 时，同时在跑的请求到此上限就暂停发射，等有返回再继续 —— 保护渠道不被堆爆。
     // =0（默认）为纯开环，不限在途（旧行为）。
