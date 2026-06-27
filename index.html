@@ -18,7 +18,78 @@ h1 .icon { font-size: 24px; }
 .form-group label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 6px; font-weight: 500; }
 .form-group input, .form-group select { width: 100%; padding: 8px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 13px; font-family: inherit; }
 .form-group input:focus, .form-group select:focus { outline: none; border-color: #1f6feb; box-shadow: 0 0 0 3px rgba(31,111,235,0.12); }
-.form-group select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b949e'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px; cursor: pointer; }
+.form-group select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  color-scheme: dark;
+  background-color: #0d1117;
+  color: #c9d1d9;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b949e'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+  cursor: pointer;
+}
+.form-group select option { background: #0d1117; color: #c9d1d9; }
+.custom-select { position: relative; }
+.custom-select-trigger {
+  width: 100%;
+  padding: 8px 12px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #c9d1d9;
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+}
+.custom-select-trigger::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 7px solid #8b949e;
+  transform: translateY(-35%);
+}
+.custom-select.open .custom-select-trigger,
+.custom-select-trigger:focus {
+  outline: none;
+  border-color: #1f6feb;
+  box-shadow: 0 0 0 3px rgba(31,111,235,0.12);
+}
+.custom-select-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.custom-select-option {
+  width: 100%;
+  border: none;
+  background: #0d1117;
+  color: #c9d1d9;
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.custom-select-option:hover,
+.custom-select-option.active {
+  background: #161b22;
+}
 
 .form-inline { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 @media (max-width: 600px) { .form-grid, .form-inline { grid-template-columns: 1fr; } .form-grid .full { grid-column: span 1; } }
@@ -116,8 +187,8 @@ h1 .icon { font-size: 24px; }
       <span style="font-size:12px;color:#484f58;padding:8px">点击「扫描模型」获取可用模型列表，或直接在下方手动输入</span>
     </div>
     <div style="margin-top:8px">
-      <label style="font-size:11px;color:#484f58">手动输入（逗号分隔，优先级高于勾选）</label>
-      <input id="modelsManual" style="width:100%;margin-top:4px;font-size:12px;padding:6px 10px;background:#0d1117;border:1px solid #21262d;border-radius:4px;color:#6e7681" placeholder="留空则使用上方勾选的模型">
+      <label style="font-size:11px;color:#484f58">手动输入（逗号分隔，仅在未勾选任何模型时生效）</label>
+      <input id="modelsManual" style="width:100%;margin-top:4px;font-size:12px;padding:6px 10px;background:#0d1117;border:1px solid #21262d;border-radius:4px;color:#6e7681" placeholder="勾选模型优先；都没勾选时才用这里">
     </div>
   </div>
 
@@ -129,39 +200,119 @@ h1 .icon { font-size: 24px; }
     <div class="form-group" id="rpmGroup" style="display:none">
       <label>目标 RPM（每分钟真实请求数）</label>
       <input id="targetRpm" type="number" min="1" max="100000" step="10" value="200" placeholder="如 200" oninput="updateRpmEstimate()">
-      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;cursor:pointer;color:#8b949e">
-        <input type="checkbox" id="rpmCache" style="width:auto" onchange="onModeChange()"> 缓存对话模式（每用户做多轮，测缓存命中）
-      </label>
       <div id="rpmEstimate" style="margin-top:8px;font-size:12px;color:#58a6ff;line-height:1.6"></div>
     </div>
     <div class="form-group" id="durationGroup">
       <label>持续时间 (秒)</label>
-      <select id="duration" onchange="updateRpmEstimate();saveDraft()">
-        <option value="10">10</option><option value="20" selected>20</option><option value="30">30</option><option value="60">60</option><option value="120">120</option>
-      </select>
+      <input id="duration" type="number" min="1" step="1" value="20" placeholder="手动输入，如 60" oninput="updateRpmEstimate();saveDraft()">
     </div>
     <div class="form-group">
       <label>测试模式</label>
       <select id="mode" onchange="onModeChange()">
-        <option value="burst" selected>独立请求 (高QPS)</option>
-        <option value="conversation">连续对话 (Cache测试)</option>
         <option value="rpm">RPM 开环 (模拟真实流量)</option>
         <option value="image">图片生成 (image-gen)</option>
       </select>
+    </div>
+  </div>
+  <div id="rpmCacheControls" style="display:none">
+    <div class="form-inline" style="margin-top:16px" id="convOpts" style="display:none">
+      <div class="form-group">
+        <label id="roundsLabel">每会话轮数</label>
+        <select id="rounds" onchange="updateRpmEstimate();saveDraft()">
+          <option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="8">8</option><option value="10">10</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>新用户比例 (%)</label>
+        <input id="rpmCacheNewUserRatio" type="number" min="0" max="100" step="1" value="35" oninput="updateRpmEstimate();saveDraft()">
+        <span style="font-size:11px;color:#6e7681;margin-top:4px;display:block">实验① 设为 100：每次都新用户，只看第1轮是否还会读到旧缓存。</span>
+      </div>
+      <div class="form-group">
+        <label>会话长度分布</label>
+        <select id="rpmCacheSessionLengthPreset" onchange="saveDraft()">
+          <option value="realistic" selected>realistic</option>
+          <option value="short">short</option>
+          <option value="sticky">sticky</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>回访间隔分布</label>
+        <select id="rpmCacheReturnIntervalPreset" onchange="saveDraft()">
+          <option value="realistic" selected>realistic</option>
+          <option value="bursty">bursty</option>
+          <option value="slow">slow</option>
+        </select>
+      </div>
+    </div>
+    <label id="rpmCacheToggleWrap" style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;cursor:pointer;color:#8b949e">
+      <input type="checkbox" id="rpmCache" style="width:auto" checked onchange="onModeChange()"> 缓存对话模式（每用户做多轮，测缓存命中）
+    </label>
+  </div>
+  <!-- 多模型方式：选了 ≥2 个模型时出现（仅 RPM 开环）。顺序=一个个单独跑；混合=随机混着跑一份合并报告 -->
+  <div class="form-group" id="rpmMultiModelGroup" style="display:none;margin-top:12px">
+    <label>多模型方式（已选 <span id="rpmMultiModelCount">0</span> 个模型）</label>
+    <select id="rpmMultiModelMode" onchange="saveDraft()">
+      <option value="sequential" selected>顺序排队 — 一个模型跑完再跑下一个（默认）</option>
+      <option value="mixed">随机混合 — 多模型混着跑一份报告（均匀轮流，各模型等量）</option>
+    </select>
+    <span style="font-size:11px;color:#6e7681;margin-top:4px;display:block">混合模式：像生图混合矩阵一样，请求均匀摊到各模型；报告里每个模型有独立的成功率/延迟/缓存明细。</span>
+  </div>
+  <!-- 真实流量参数：上下文规模 + 随机参数 -->
+  <div class="form-inline" style="margin-top:12px" id="realTrafficOpts">
+    <div class="form-group">
+      <label>上下文规模</label>
+      <select id="contextScale" onchange="saveDraft()">
+        <option value="short" selected>短 — 每次约消耗 2400 token（最省，测连通/缓存推荐）</option>
+        <option value="medium">中 — 每次约消耗 2700 token</option>
+        <option value="long">长 — 每次约消耗 4700 token，模拟 RAG / 长对话</option>
+      </select>
+      <span style="font-size:11px;color:#6e7681;margin-top:4px;display:block">缓存命中后第2轮起只按约 1/10 价格计费。四档缓存命中率一样，差别只是 user 消息长度。</span>
+    </div>
+    <div class="form-group" style="padding-top:22px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;color:#8b949e">
+        <input type="checkbox" id="randomParams" style="width:auto" checked onchange="saveDraft()"> 随机参数（temperature/top_p/system 等，更像真实客户端；Claude 自动只注入安全字段）
+      </label>
     </div>
   </div>
   <!-- 图片生成专属参数 -->
   <div class="form-inline" style="margin-top:12px" id="imageOpts" style="display:none">
     <div class="form-group">
       <label>图片尺寸</label>
-      <select id="imageSize">
-        <option value="1024x1024" selected>1024×1024（最低费用）</option>
+      <select id="imageSize" onchange="saveDraft()">
+        <option value="mixed" selected>混合尺寸：1K / 1080p / 2K / 4K 均匀分布</option>
+        <option value="1024x1024">1024×1024（固定）</option>
         <option value="1536x1024">1536×1024</option>
         <option value="1024x1536">1024×1536</option>
+        <option value="1920x1088">1920×1088（1080p 对齐，若上游支持）</option>
+        <option value="2048x1152">2048×1152（2K，若上游支持）</option>
+        <option value="2560x1440">2560×1440（2K / QHD，若上游支持）</option>
+        <option value="3840x2160">3840×2160（UHD / 4K，若上游支持）</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>生图负载</label>
+      <select id="imageWorkloadMode" onchange="saveDraft()">
+        <option value="mixed" selected>混合：文生图 + 图生图需求均匀分布</option>
+        <option value="text-to-image">只测文生图</option>
+        <option value="image-to-image-intent">只测图生图需求（不上传素材）</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>清晰度档位</label>
+      <select id="imageQualityMode" onchange="saveDraft()">
+        <option value="mixed" selected>混合：low / medium / high 均匀分布</option>
+        <option value="fixed">固定 low（最低成本）</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>发射方式</label>
+      <select id="imageMode" onchange="onModeChange()">
+        <option value="burst" selected>一次性并发（设并发数）</option>
+        <option value="rpm">RPM 开环（设每分钟张数 + 时长）</option>
       </select>
     </div>
     <div class="form-group" style="padding-top:22px">
-      <span style="font-size:12px;color:#8b949e">Prompt 自动从安全词库取（极短英文名词），quality=low，n=1，图片数据不落盘</span>
+      <span style="font-size:12px;color:#8b949e">图片模式一次只用 1 个模型发图。选 nano banana 就全程用 nano banana；选 gpt-image-2 就全程用 gpt-image-2，不混用。</span>
     </div>
   </div>
   <div class="form-inline" style="margin-top:16px">
@@ -169,34 +320,7 @@ h1 .icon { font-size: 24px; }
       <label>报告标签 (PDF / 页面表头名称)</label>
       <input id="reportLabel" value="" placeholder="留空默认「渠道压力测试报告」，例如：我的渠道 压测报告" onchange="saveDraft()">
     </div>
-  <div class="form-inline" style="margin-top:16px" id="convOpts" style="display:none">
-    <div class="form-group">
-      <label>每会话轮数</label>
-      <select id="rounds" onchange="updateRpmEstimate();saveDraft()">
-        <option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="8">8</option><option value="10">10</option>
-      </select>
-    </div>
   </div>
-  <!-- 并发 → RPM 换算器 -->
-  <div style="background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:12px 16px;margin-top:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-    <span style="font-size:12px;color:#8b949e;white-space:nowrap">并发 → RPM 换算</span>
-    <div style="display:flex;align-items:center;gap:8px">
-      <label style="font-size:11px;color:#8b949e;white-space:nowrap">并发数</label>
-      <input id="calcConc" type="number" min="1" value="50" oninput="calcRpmFromConc()"
-        style="width:80px;padding:5px 8px;background:#161b22;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:13px">
-    </div>
-    <div style="display:flex;align-items:center;gap:8px">
-      <label style="font-size:11px;color:#8b949e;white-space:nowrap">平均延迟 (s)</label>
-      <input id="calcLatency" type="number" min="0.1" step="0.1" value="5" oninput="calcRpmFromConc()"
-        style="width:70px;padding:5px 8px;background:#161b22;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:13px">
-    </div>
-    <div style="display:flex;align-items:center;gap:8px">
-      <span style="font-size:11px;color:#8b949e;white-space:nowrap">= </span>
-      <span id="calcRpmOut" style="font-size:20px;font-weight:700;color:#58a6ff">600</span>
-      <span style="font-size:11px;color:#8b949e">RPM</span>
-    </div>
-  </div>
-
   <div class="btn-row">
     <button class="btn btn-primary" id="btnStart" onclick="start()">▶ 开始压测</button>
     <button class="btn btn-danger hidden" id="btnStop" onclick="stop()">⏹ 停止</button>
@@ -208,6 +332,10 @@ h1 .icon { font-size: 24px; }
 <!-- Live Monitor -->
 <div id="liveCard" class="card hidden">
   <div class="card-title"><span class="dot-live"></span> 实时监控 <span id="elapsedLabel" style="font-weight:400;color:#8b949e;font-size:13px;margin-left:8px"></span></div>
+  <div id="sequenceBanner" class="hidden" style="margin-bottom:12px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 14px;color:#e6edf3;font-size:13px;line-height:1.6">
+    <strong style="color:#58a6ff">多模型顺序测试</strong>
+    <span id="sequenceBannerText" style="margin-left:8px;color:#c9d1d9"></span>
+  </div>
   <div class="metrics-row">
     <div class="metric-box"><div class="val" id="mTotal">0</div><div class="lbl">总请求</div></div>
     <div class="metric-box"><div class="val val-ok" id="mOk">0</div><div class="lbl">成功</div></div>
@@ -217,9 +345,9 @@ h1 .icon { font-size: 24px; }
     <div class="metric-box" id="boxRpm" style="display:none"><div class="val" id="mRpm">0</div><div class="lbl">实际RPM</div></div>
     <div class="metric-box" id="boxInflight" style="display:none"><div class="val val-warn" id="mInflight">0</div><div class="lbl">在途/峰值</div></div>
     <div class="metric-box"><div class="val val-warn" id="mCache">0</div><div class="lbl">Cache Hits</div></div>
-    <div class="metric-box"><div class="val" id="mAvg">0ms</div><div class="lbl">平均延迟</div></div>
-    <div class="metric-box"><div class="val" id="mP50">0ms</div><div class="lbl">P50</div></div>
-    <div class="metric-box"><div class="val" id="mP95">0ms</div><div class="lbl">P95</div></div>
+    <div class="metric-box"><div class="val" id="mAvg">0.00s</div><div class="lbl">平均延迟</div></div>
+    <div class="metric-box"><div class="val" id="mP50">0.00s</div><div class="lbl">P50</div></div>
+    <div class="metric-box"><div class="val" id="mP95">0.00s</div><div class="lbl">P95</div></div>
   </div>
   <div class="progress-bar"><div class="fill" id="barFill" style="width:0%"></div></div>
 </div>
@@ -233,6 +361,60 @@ var _report = null;
 var _allModels = []; // {id, isChat}
 var _activeConfig = null;
 var STORAGE_KEY = "stress-test-dashboard-draft-v1";
+var RPM_CACHE_DEFAULT_NEW_USER_RATIO = 35;
+var RPM_CACHE_DEFAULT_TRAFFIC_MODE = "realistic";
+var RPM_CACHE_DEFAULT_SESSION_PRESET = "realistic";
+var RPM_CACHE_DEFAULT_RETURN_PRESET = "realistic";
+var RPM_CACHE_DEFAULT_MAX_ROUNDS = 6;
+var RPM_CACHE_SESSION_LENGTH_PRESET_META = {
+  realistic: [
+    { turns: 1, weight: 40 },
+    { turns: 2, weight: 30 },
+    { turns: 3, weight: 15 },
+    { turns: 4, weight: 10 },
+    { turns: 5, weight: 3 },
+    { turns: 6, weight: 2 }
+  ],
+  short: [
+    { turns: 1, weight: 55 },
+    { turns: 2, weight: 25 },
+    { turns: 3, weight: 10 },
+    { turns: 4, weight: 6 },
+    { turns: 5, weight: 3 },
+    { turns: 6, weight: 1 }
+  ],
+  sticky: [
+    { turns: 1, weight: 20 },
+    { turns: 2, weight: 25 },
+    { turns: 3, weight: 20 },
+    { turns: 4, weight: 15 },
+    { turns: 5, weight: 10 },
+    { turns: 6, weight: 10 }
+  ]
+};
+var RPM_CACHE_RETURN_PRESET_LABELS = {
+  realistic: "0-3s/3-15s/15-60s/60-300s 混合回访",
+  bursty: "回访更快，缓存更容易命中",
+  slow: "回访更慢，更接近冷启动流量"
+};
+
+// 多用户会话隔离：每个浏览器一个 sessionId，所有 API 都带上 X-Session-Id
+// → 后端按 session 路由到各自独立 engine，4 人同时测各的 key 互不串、互不影响
+var SESSION_ID = (function() {
+  var k = "stress-session-id";
+  var v = localStorage.getItem(k);
+  if (!v) {
+    v = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+      : (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2));
+    localStorage.setItem(k, v);
+  }
+  return v;
+})();
+function apiFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers || {}, { "X-Session-Id": SESSION_ID });
+  return fetch(url, opts);
+}
 
 function $(id) { return document.getElementById(id); }
 function trimSlash(url) { return String(url || "").trim().replace(/\/+$/, ""); }
@@ -249,10 +431,193 @@ function getDraft() {
   }
 }
 
-function calcRpmFromConc() {
-  var conc = parseFloat(document.getElementById("calcConc").value) || 1;
-  var lat = parseFloat(document.getElementById("calcLatency").value) || 1;
-  document.getElementById("calcRpmOut").textContent = Math.round(conc / lat * 60).toLocaleString();
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function parsePercentValue(v) {
+  return parseFloat(String(v == null ? 0 : v).replace("%", "")) || 0;
+}
+
+function lowerBetterScore(sec, goodSec, badSec, weight) {
+  if (!Number.isFinite(sec) || sec <= 0) return weight;
+  if (sec <= goodSec) return weight;
+  if (sec >= badSec) return 0;
+  return weight * (1 - ((sec - goodSec) / (badSec - goodSec)));
+}
+
+function getImageLatencyProfile(imageSize) {
+  var size = String(imageSize || "1024x1024").toLowerCase();
+  if (size === "2560x1440") {
+    return { label: "2K", avgGood: 20, avgBad: 55, p95Good: 30, p95Bad: 75 };
+  }
+  if (size === "3840x2160") {
+    return { label: "4K", avgGood: 35, avgBad: 90, p95Good: 50, p95Bad: 120 };
+  }
+  return { label: "1K", avgGood: 12, avgBad: 35, p95Good: 20, p95Bad: 50 };
+}
+
+function computeCompositeGrade(summary, latency, isImageReport, imageSize) {
+  var successRate = clamp(parsePercentValue(summary.successRate), 0, 100);
+  var avgSec = Math.max(0, Number(latency.avg || 0) / 1000);
+  var p95Sec = Math.max(0, Number(latency.p95 || 0) / 1000);
+  var totalDone = Math.max(0, Number(summary.totalDone || 0));
+  var success = Math.max(0, Number(summary.success || 0));
+  var rateLimited = Math.max(0, Number(summary.rateLimited || 0));
+  var targetRpm = Math.max(0, Number(summary.targetRpm || 0));
+  var actualRpm = Math.max(0, Number(summary.actualRpm || 0));
+  var rateLimitRatio = totalDone > 0 ? (rateLimited / totalDone) : 0;
+  var rpmRatio = targetRpm > 0 ? clamp(actualRpm / targetRpm, 0, 1) : 1;
+  var imageProfile = isImageReport ? getImageLatencyProfile(imageSize) : null;
+  var isCacheProbe = !isImageReport && (String(summary.cacheHitRate || "") !== "N/A" || Number(summary.cacheReadTokens || 0) > 0 || summary.cacheObserved);
+  var lowSampleCacheProbe = isCacheProbe && totalDone > 0 && totalDone < 20;
+  var cacheRate = String(summary.cacheHitRate || "") === "N/A" ? 0 : clamp(parsePercentValue(summary.cacheHitRate), 0, 100);
+
+  var scoreSuccessRate = successRate;
+  if (lowSampleCacheProbe && success > 0) {
+    // 小样本缓存诊断常只有 6-12 个请求，单个 502 会把成功率放大成灾难级。
+    // 评分层做温和贝叶斯平滑；原始成功/失败数字仍如实展示。
+    scoreSuccessRate = ((success + 8) / (totalDone + 10)) * 100;
+  }
+
+  var successWeight = isCacheProbe ? 25 : 45;
+  var avgWeight = isCacheProbe ? 15 : 20;
+  var p95Weight = isCacheProbe ? 10 : 15;
+  var rateLimitWeight = 10;
+  var rpmWeight = isCacheProbe ? 5 : 10;
+  var cacheWeight = isCacheProbe ? 35 : 0;
+
+  var successScore = successWeight * clamp((scoreSuccessRate - 60) / 40, 0, 1);
+  var avgScore = lowerBetterScore(avgSec, isImageReport ? imageProfile.avgGood : 2, isImageReport ? imageProfile.avgBad : 12, avgWeight);
+  var p95Score = lowerBetterScore(p95Sec, isImageReport ? imageProfile.p95Good : 5, isImageReport ? imageProfile.p95Bad : 20, p95Weight);
+  var rateLimitScore = rateLimitWeight * clamp(1 - (rateLimitRatio / 0.10), 0, 1);
+  var rpmScore = rpmWeight * rpmRatio;
+  var cacheScore = cacheWeight * clamp(cacheRate / 100, 0, 1);
+  var score = successScore + avgScore + p95Score + rateLimitScore + rpmScore;
+  if (isCacheProbe) score += cacheScore;
+  score = Math.round(score * 10) / 10;
+
+  var color = score >= 88 ? "#2e7d32" : score >= 78 ? "#0071e3" : score >= 65 ? "#e65100" : "#c62828";
+  var rpmText = targetRpm > 0 ? (Math.round(rpmRatio * 100) + "%") : "N/A";
+  var reasons = [
+    "成功率 " + successRate.toFixed(1) + "%（" + successScore.toFixed(1) + "/" + successWeight + "）",
+    "平均延迟 " + avgSec.toFixed(2) + "s（" + avgScore.toFixed(1) + "/" + avgWeight + "）",
+    "P95 " + p95Sec.toFixed(2) + "s（" + p95Score.toFixed(1) + "/" + p95Weight + "）",
+    "429占比 " + (rateLimitRatio * 100).toFixed(1) + "%（" + rateLimitScore.toFixed(1) + "/" + rateLimitWeight + "）",
+    "负载达成 " + rpmText + "（" + rpmScore.toFixed(1) + "/" + rpmWeight + "）",
+  ];
+  if (isCacheProbe) {
+    reasons.splice(1, 0, "Cache命中率 " + cacheRate.toFixed(1) + "%（" + cacheScore.toFixed(1) + "/" + cacheWeight + "）");
+  }
+  if (isImageReport && imageProfile) {
+    reasons.push("图片评分线 " + imageProfile.label + "（平均 " + imageProfile.avgGood + "-" + imageProfile.avgBad + "s，P95 " + imageProfile.p95Good + "-" + imageProfile.p95Bad + "s）");
+  }
+  if (lowSampleCacheProbe) {
+    reasons.push("小样本缓存诊断：成功率评分已平滑，原始成功/失败仍如实显示");
+  }
+
+  return {
+    score: score,
+    color: color,
+    successRate: successRate,
+    avgSec: avgSec,
+    p95Sec: p95Sec,
+    rateLimitRatio: rateLimitRatio,
+    rpmRatio: rpmRatio,
+    reasons: reasons,
+  };
+}
+
+function shouldShowCompositeGrade(isImageReport) {
+  return !isImageReport;
+}
+
+function errorLabelFromType(type) {
+  var raw = String(type || "");
+  var m = raw.match(/(?:^|[^0-9])([1-5][0-9]{2})(?:[^0-9]|$)/);
+  if (!m) return raw.slice(0, 18) || "错误";
+  var code = m[1];
+  if (code === "429" || /限流|rate/i.test(raw)) return code + " 限流";
+  if (code === "400" && /安全|safety|content/i.test(raw)) return code + " 安全拦截";
+  if (code[0] === "5") return code + " 上游错误";
+  return code + " 错误";
+}
+
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderErrorSamples(samples, pdfMode) {
+  samples = Array.isArray(samples) ? samples : [];
+  if (!samples.length) return "";
+  var h = pdfMode
+    ? '<div class="section"><h2>错误原文样本</h2>'
+    : '<div class="section-title" style="color:#f85149">错误原文样本</div>';
+  samples.slice(0, pdfMode ? 8 : 20).forEach(function(s, idx) {
+    var meta = [];
+    if (s.status) meta.push("status " + s.status);
+    if (s.count) meta.push("count " + s.count);
+    if (s.model) meta.push("model " + s.model);
+    if (s.turn) meta.push("turn " + s.turn);
+    if (s.requestId) meta.push("request-id " + s.requestId);
+    if (s.upstreamStatus) meta.push("upstream-status " + s.upstreamStatus);
+    if (s.contentType) meta.push("content-type " + s.contentType);
+    var raw = s.rawBody || s.error || "";
+    if (pdfMode) {
+      h += '<div class="note" style="white-space:pre-wrap;word-break:break-word;margin-bottom:8px"><strong>#' + (idx + 1) + ' ' + escapeHtml(meta.join(" · ")) + '</strong><br>' + escapeHtml(raw) + '</div>';
+    } else {
+      h += '<div style="border:1px solid #21262d;border-radius:8px;padding:12px 14px;margin-bottom:10px;background:#0d1117">';
+      h += '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">#' + (idx + 1) + ' ' + escapeHtml(meta.join(" · ")) + '</div>';
+      h += '<pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.6;color:#c9d1d9;background:#010409;border:1px solid #21262d;border-radius:6px;padding:10px">' + escapeHtml(raw) + '</pre>';
+      h += '</div>';
+    }
+  });
+  if (pdfMode) h += '</div>';
+  return h;
+}
+
+function buildTopMetricCards(d, opts) {
+  opts = opts || {};
+  var s = d.summary || {};
+  var l = d.latency || {};
+  var max = opts.max || 8;
+  var cards = [];
+  function add(value, label, color, key) {
+    if (cards.length >= max) return;
+    if (key && cards.some(function(c) { return c.key === key; })) return;
+    cards.push({ value: value, label: label, color: color || "", key: key || label });
+  }
+  if (Number(s.targetRpm || 0) > 0) add(s.targetRpm, "目标 RPM", "#0071e3", "targetRpm");
+  if (Number(s.actualRpm || 0) > 0) add(s.actualRpm || 0, "实际 RPM", "#2e7d32", "actualRpm");
+  add(s.totalDone || 0, "总请求", "", "totalDone");
+  add(s.successRate || "0%", "成功率", "#2e7d32", "successRate");
+  add((s.success || 0) + " / " + (s.fail || 0), "成功 / 失败", "", "successFail");
+
+  (d.errorSummary || []).forEach(function(e) {
+    var count = Number(e.count || 0);
+    if (count <= 0) return;
+    add(count, errorLabelFromType(e.type), "#e65100", "err:" + String(e.type || ""));
+  });
+
+  var duration = s.duration || "";
+  var avgSec = Number(l.avg || 0) > 0 ? (Number(l.avg) / 1000).toFixed(2) + "s" : "";
+  var p95Sec = Number(l.p95 || 0) > 0 ? (Number(l.p95) / 1000).toFixed(2) + "s" : "";
+  var qpsLabel = (d.config && d.config.mode === "image") ? "图/秒" : "QPS";
+  [
+    { value: s.peakInflight || 0, label: "峰值在途", color: "#0071e3", key: "peakInflight", show: Number(s.peakInflight || 0) > 0 },
+    { value: duration, label: "总耗时", key: "duration", show: !!duration },
+    { value: avgSec, label: "平均耗时", color: "#0071e3", key: "avg", show: !!avgSec },
+    { value: p95Sec, label: "P95", color: "#e65100", key: "p95", show: !!p95Sec },
+    { value: s.qps || 0, label: qpsLabel, color: "#0071e3", key: "qps", show: Number(s.qps || 0) > 0 },
+  ].forEach(function(item) {
+    if (item.show !== false) add(item.value, item.label, item.color, item.key);
+  });
+  return cards.slice(0, max);
 }
 
 function saveDraft(extra) {
@@ -262,9 +627,19 @@ function saveDraft(extra) {
     concurrency: $("concurrency").value,
     targetRpm: $("targetRpm").value,
     rpmCache: $("rpmCache").checked,
+    rpmMultiModelMode: $("rpmMultiModelMode") ? $("rpmMultiModelMode").value : "sequential",
     durationSeconds: $("duration").value,
     roundsPerSession: $("rounds").value,
+    rpmCacheNewUserRatio: $("rpmCacheNewUserRatio") ? $("rpmCacheNewUserRatio").value : String(RPM_CACHE_DEFAULT_NEW_USER_RATIO),
+    rpmCacheSessionLengthPreset: $("rpmCacheSessionLengthPreset") ? $("rpmCacheSessionLengthPreset").value : RPM_CACHE_DEFAULT_SESSION_PRESET,
+    rpmCacheReturnIntervalPreset: $("rpmCacheReturnIntervalPreset") ? $("rpmCacheReturnIntervalPreset").value : RPM_CACHE_DEFAULT_RETURN_PRESET,
     mode: $("mode").value,
+    contextScale: $("contextScale").value,
+    randomParams: $("randomParams").checked,
+    imageSize: $("imageSize") ? $("imageSize").value : "mixed",
+    imageWorkloadMode: $("imageWorkloadMode") ? $("imageWorkloadMode").value : "mixed",
+    imageQualityMode: $("imageQualityMode") ? $("imageQualityMode").value : "mixed",
+    imageMode: $("imageMode") ? $("imageMode").value : "burst",
     reportLabel: $("reportLabel").value.trim(),
     modelsManual: $("modelsManual").value.trim(),
     selectedModels: getSelectedModels(),
@@ -288,8 +663,26 @@ function applyConfig(config) {
   if (typeof config.apiKey === "string" && config.apiKey) $("apiKey").value = config.apiKey;
   if (config.concurrency) $("concurrency").value = String(config.concurrency);
   if (config.targetRpm) $("targetRpm").value = String(config.targetRpm);
-  if (typeof config.rpmCache === "boolean") $("rpmCache").checked = config.rpmCache;
-  if (config.mode) { $("mode").value = String(config.mode); }
+  if ($("rpmCacheNewUserRatio")) $("rpmCacheNewUserRatio").value = String(config.rpmCacheNewUserRatio != null ? config.rpmCacheNewUserRatio : RPM_CACHE_DEFAULT_NEW_USER_RATIO);
+  if ($("rpmCacheSessionLengthPreset")) $("rpmCacheSessionLengthPreset").value = config.rpmCacheSessionLengthPreset || RPM_CACHE_DEFAULT_SESSION_PRESET;
+  if ($("rpmCacheReturnIntervalPreset")) $("rpmCacheReturnIntervalPreset").value = config.rpmCacheReturnIntervalPreset || RPM_CACHE_DEFAULT_RETURN_PRESET;
+  // 缓存对话模式：每次加载默认勾选（用户要求，忽略旧草稿）；想关可当次手动取消
+  $("rpmCache").checked = true;
+  if (config.rpmMultiModelMode && $("rpmMultiModelMode")) $("rpmMultiModelMode").value = config.rpmMultiModelMode === "mixed" ? "mixed" : "sequential";
+  if (config.mode) {
+    var normalizedMode = String(config.mode);
+    if (normalizedMode === "burst" || normalizedMode === "conversation") normalizedMode = "rpm";
+    $("mode").value = normalizedMode;
+  }
+  if (config.contextScale) $("contextScale").value = (String(config.contextScale) === "simple") ? "short" : String(config.contextScale);
+  // 随机参数：每次加载默认勾选（用户要求，忽略旧草稿）；想关可当次手动取消
+  $("randomParams").checked = true;
+  if ($("imageSize")) {
+    $("imageSize").value = config.imageSizeMode === "mixed" ? "mixed" : String(config.imageSize || "mixed");
+  }
+  if (config.imageWorkloadMode && $("imageWorkloadMode")) $("imageWorkloadMode").value = String(config.imageWorkloadMode);
+  if (config.imageQualityMode && $("imageQualityMode")) $("imageQualityMode").value = String(config.imageQualityMode);
+  if (config.imageMode && $("imageMode")) $("imageMode").value = String(config.imageMode);
   if (config.durationSeconds) $("duration").value = String(config.durationSeconds);
   if (config.roundsPerSession) $("rounds").value = String(config.roundsPerSession);
   if (typeof config.reportLabel === "string") {
@@ -303,9 +696,11 @@ function applyConfig(config) {
 }
 
 function bindDraftPersistence() {
-  ["baseUrl", "apiKey", "concurrency", "targetRpm", "duration", "rounds", "mode", "reportLabel", "modelsManual"].forEach(function(id) {
-    $(id).addEventListener("change", function() { saveDraft(); });
-    $(id).addEventListener("blur", function() { saveDraft(); });
+  ["baseUrl", "apiKey", "concurrency", "targetRpm", "duration", "rounds", "rpmCacheNewUserRatio", "rpmCacheSessionLengthPreset", "rpmCacheReturnIntervalPreset", "mode", "contextScale", "randomParams", "reportLabel", "modelsManual"].forEach(function(id) {
+    var el = $(id);
+    if (!el) return;
+    el.addEventListener("change", function() { saveDraft(); });
+    el.addEventListener("blur", function() { saveDraft(); });
   });
 }
 
@@ -337,7 +732,7 @@ function scanModels() {
   $("scanStatus").textContent = "扫描中...";
   $("scanStatus").style.color = "#d2991d";
 
-  fetch("/api/models", {
+  apiFetch("/api/models", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ baseUrl: baseUrl, apiKey: apiKey }),
@@ -362,15 +757,29 @@ function renderModelList() {
   var grid = $("modelList");
   var draft = getDraft();
   var selected = Array.isArray(draft.selectedModels) ? draft.selectedModels : [];
+  var officialAliasMap = {
+    "gemini-3-pro-image-preview": "gemini-3-pro-image",
+    "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
+    "gemini-2.5-flash-image-preview": "gemini-2.5-flash-image",
+  };
   var html = "";
   _allModels.forEach(function(m) {
     var checked = selected.length ? selected.indexOf(m.id) >= 0 : m.isChat;
+    var idLower = String(m.id || "").toLowerCase();
+    var isImage = /^(gpt-image|dall-e|sora|nano[ -]?banana|gemini-3-pro-image|gemini-3\.1-flash-image)/i.test(m.id);
     html += '<label class="model-item">';
     html += '<input type="checkbox" value="' + m.id + '" ' + (checked ? "checked" : "") + ' onchange="updateCount()">';
+    if (isImage) html += '<span style="font-size:13px">🖼️</span> ';
     html += m.id;
-    if (!m.isChat) {
-      var tag = m.id.match(/^(gpt-image|dall-e|sora)/) ? "图片生成" : "非对话";
-      html += ' <span style="color:#484f58;font-size:10px">' + tag + '</span>';
+    if (isImage) {
+      html += ' <span style="background:#8957e5;color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:9px;letter-spacing:.3px">图片生成</span>';
+    } else if (officialAliasMap[idLower]) {
+      html += ' <span style="color:#484f58;font-size:10px">疑似图像别名</span>';
+    } else if (!m.isChat) {
+      html += ' <span style="color:#484f58;font-size:10px">非对话</span>';
+    }
+    if (officialAliasMap[idLower]) {
+      html += ' <span style="color:#58a6ff;font-size:10px">官方: ' + officialAliasMap[idLower] + '</span>';
     }
     html += '</label>';
   });
@@ -391,6 +800,7 @@ function checkedCount() {
 
 function updateCount() {
   $("modelCount").textContent = "已选 " + checkedCount() + " / " + _allModels.length;
+  refreshMultiModelOption();
   saveDraft();
 }
 
@@ -409,32 +819,61 @@ function deselectAll() {
 }
 
 function resolveModels() {
+  // 优先级：勾选 > 手动输入。勾选了模型就用勾选的；没勾选时才回退到手动输入框。
+  var sel = getSelectedModels();
+  if (sel.length) return sel;
   var manual = $("modelsManual").value.trim();
   if (manual) return manual.split(",").map(function(s) { return s.trim(); }).filter(Boolean);
-  var sel = getSelectedModels();
-  if (!sel.length) { alert("请扫描并勾选模型，或手动输入"); return null; }
-  return sel;
+  alert("请扫描并勾选模型，或手动输入");
+  return null;
 }
 
 // ---- 控制 ----
 var _activeConfig = null;
+var IMAGE_RPM_SAFE_MAX = 1000;
+var IMAGE_RPM_DEFAULT_MAX_INFLIGHT = 2000;
 
 function onModeChange() {
   var mode = $("mode").value;
-  var isRpm = (mode === "rpm");
   var isImage = (mode === "image");
-  var isBatch = (mode === "burst" || mode === "image");  // 一次性批量，无需时间
-  var rpmCacheOn = isRpm && $("rpmCache") && $("rpmCache").checked;
-  document.getElementById("convOpts").style.display = (mode === "conversation" || rpmCacheOn) ? "grid" : "none";
+  var imageRpm = isImage && $("imageMode") && $("imageMode").value === "rpm";   // 图片 RPM 子模式
+  var isRpm = (mode === "rpm") || imageRpm;          // 走 RPM 控件的统一判断
+  var isBatch = isImage && !imageRpm;  // 一次性批量，无需时间
+  var rpmCacheOn = (mode === "rpm") && $("rpmCache") && $("rpmCache").checked;
+  var rpmCacheControls = document.getElementById("rpmCacheControls");
+  if (rpmCacheControls) rpmCacheControls.style.display = (mode === "rpm") ? "block" : "none";
+  var convOpts = document.getElementById("convOpts");
+  if (convOpts) convOpts.style.display = rpmCacheOn ? "block" : "none";
   document.getElementById("rpmGroup").style.display = isRpm ? "block" : "none";
   document.getElementById("concurrencyGroup").style.display = isRpm ? "none" : "block";
   document.getElementById("imageOpts").style.display = isImage ? "grid" : "none";
+  // 真实流量参数（上下文规模/随机参数）只对文字模式有意义，图片模式隐藏
+  var rt = document.getElementById("realTrafficOpts");
+  if (rt) rt.style.display = isImage ? "none" : "flex";
   document.getElementById("durationGroup").style.display = isBatch ? "none" : "block";
   // 并发数 label
   var concLabel = document.querySelector("#concurrencyGroup label");
   if (concLabel) concLabel.textContent = isBatch ? "并发数（同时发出的请求总数）" : "并发数";
+  var targetInput = $("targetRpm");
+  if (targetInput) {
+    targetInput.max = imageRpm ? String(IMAGE_RPM_SAFE_MAX) : "100000";
+    targetInput.placeholder = imageRpm ? "最高建议 1000" : "如 200";
+  }
   updateRpmEstimate();
+  refreshMultiModelOption();
   saveDraft();
+}
+
+// 多模型方式开关：仅在「RPM 开环 + 已选 ≥2 个模型」时显示
+function refreshMultiModelOption() {
+  var grp = document.getElementById("rpmMultiModelGroup");
+  if (!grp) return;
+  var mode = $("mode").value;
+  var n = (typeof checkedCount === "function") ? checkedCount() : 0;
+  var show = (mode === "rpm") && n >= 2;
+  grp.style.display = show ? "block" : "none";
+  var cnt = document.getElementById("rpmMultiModelCount");
+  if (cnt) cnt.textContent = n;
 }
 
 // RPM 模式预估提示：把 目标RPM × 时长 × 轮数 的关系一行讲清楚
@@ -442,13 +881,18 @@ function updateRpmEstimate() {
   var box = document.getElementById("rpmEstimate");
   if (!box) return;
   var mode = $("mode").value;
-  if (mode !== "rpm") { box.textContent = ""; return; }
+  var imageRpm = (mode === "image") && $("imageMode") && $("imageMode").value === "rpm";
+  if (mode !== "rpm" && !imageRpm) { box.textContent = ""; return; }
   var rpm = parseInt($("targetRpm").value) || 0;
   var dur = parseInt($("duration").value) || 0;
-  var cacheOn = $("rpmCache") && $("rpmCache").checked;
+  var cacheOn = (mode === "rpm") && $("rpmCache") && $("rpmCache").checked;
   var totalReq = Math.round(rpm * dur / 60);
   if (rpm <= 0 || dur <= 0) { box.textContent = ""; return; }
   var html = "约 <b>" + totalReq.toLocaleString() + "</b> 个真实请求（" + rpm + " rpm × " + dur + "s）";
+  if (imageRpm) {
+    html += "，图片 RPM 安全上限 <b>" + IMAGE_RPM_SAFE_MAX + "</b>";
+    html += "，默认在途保护 <b>" + IMAGE_RPM_DEFAULT_MAX_INFLIGHT + "</b>";
+  }
   if (cacheOn) {
     var rounds = parseInt($("rounds").value) || 1;
     var users = rounds > 0 ? Math.max(1, Math.round(totalReq / rounds)) : totalReq;
@@ -467,44 +911,64 @@ function start() {
   if (!models) return;
 
   var mode = $("mode").value;
-  var isBatch = (mode === "burst" || mode === "image");
+  var imageRpm = (mode === "image") && $("imageMode") && $("imageMode").value === "rpm";
+  var isBatch = (mode === "image") && !imageRpm;
   var config = {
     baseUrl: trimSlash($("baseUrl").value),
     apiKey: $("apiKey").value.trim(),
     concurrency: parseInt($("concurrency").value) || 100,
     durationSeconds: isBatch ? 0 : (parseInt($("duration").value) || 20),
     mode: mode,
-    timeout: 30000,
+    timeout: 0,
+    contextScale: $("contextScale").value || "medium",
+    randomParams: $("randomParams").checked,
     models: models,
   };
-  if (mode === "conversation") {
-    config.roundsPerSession = parseInt($("rounds").value) || 6;
-    config.maxTokens = 150;
-  } else if (mode === "rpm") {
+  if (mode === "rpm") {
     config.targetRpm = parseInt($("targetRpm").value) || 0;
+    config.maxInflight = 0;
     config.concurrency = 1;
     config.rpmCache = $("rpmCache").checked;
     if (config.rpmCache) {
       config.roundsPerSession = parseInt($("rounds").value) || 4;
+      config.rpmCacheNewUserRatio = clamp(parseInt($("rpmCacheNewUserRatio").value), 0, 100);
+      config.rpmCacheSessionLengthPreset = $("rpmCacheSessionLengthPreset").value || RPM_CACHE_DEFAULT_SESSION_PRESET;
+      config.rpmCacheReturnIntervalPreset = $("rpmCacheReturnIntervalPreset").value || RPM_CACHE_DEFAULT_RETURN_PRESET;
       config.maxTokens = 150;
     } else {
       config.roundsPerSession = 1;
       config.maxTokens = 20;
     }
     if (config.targetRpm < 1) return alert("请填写目标 RPM");
+    // 多模型方式：≥2 个模型时，混合=随机混着跑一份合并报告；顺序=一个个单独跑（默认）
+    config.rpmMultiModelMode = (models.length > 1 && $("rpmMultiModelMode") && $("rpmMultiModelMode").value === "mixed") ? "mixed" : "sequential";
   } else if (mode === "image") {
-    config.imageSize = $("imageSize").value || "1024x1024";
+    var selectedImageSize = $("imageSize").value || "mixed";
+    config.imageSizeMode = selectedImageSize === "mixed" ? "mixed" : "fixed";
+    config.imageSize = selectedImageSize === "mixed" ? "1024x1024" : selectedImageSize;
+    config.imageWorkloadMode = ($("imageWorkloadMode") && $("imageWorkloadMode").value) || "mixed";
+    config.imageQualityMode = ($("imageQualityMode") && $("imageQualityMode").value) || "mixed";
     config.maxTokens = 5;
-    config.timeout = 120000;
+    config.timeout = 0;
+    config.imageMode = ($("imageMode") && $("imageMode").value) || "burst";
+    if (config.imageMode === "rpm") {
+      config.targetRpm = parseInt($("targetRpm").value) || 0;
+      config.maxInflight = IMAGE_RPM_DEFAULT_MAX_INFLIGHT;
+      config.timeout = 600000;
+      config.concurrency = 1;
+      config.roundsPerSession = 1;
+      if (config.targetRpm < 1) return alert("请填写目标 RPM（每分钟生成张数）");
+      if (config.targetRpm > IMAGE_RPM_SAFE_MAX) return alert("当前服务器图片 RPM 安全上限为 " + IMAGE_RPM_SAFE_MAX + "，请填写不超过 " + IMAGE_RPM_SAFE_MAX + " 的目标 RPM");
+    }
   } else {
     // burst: 一次性批量，并发数即总请求数
     config.roundsPerSession = 1;
     config.maxTokens = 20;
   }
-
   if (!config.baseUrl || !config.apiKey) return alert("请填写 Base URL 和 API Key");
   if (!config.models.length) return alert("至少选一个模型");
-  if (mode !== "rpm" && config.concurrency < 1) return alert("并发数至少为 1");
+  if (mode === "image" && config.models.length !== 1) return alert("图片模式一次只能选 1 个模型，避免把 nano banana 和 gpt-image-2 混着发");
+  if (mode === "image" && !imageRpm && config.concurrency < 1) return alert("并发数至少为 1");
 
   saveDraft({ models: models });
   $("btnStart").disabled = true;
@@ -512,19 +976,18 @@ function start() {
   $("reportWrap").innerHTML = "";
   $("statusText").textContent = "";
 
-  fetch("/api/start", {
+  apiFetch("/api/start", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),
   }).then(function(r) { return r.json(); }).then(function(res) {
     if (res.error) { alert(res.error); resetUI(); return; }
+    var imageModel = (mode === "image" && config.models && config.models[0]) ? config.models[0] : "";
     var runLabel = mode === "rpm"
       ? ("RPM 开环 " + config.targetRpm + (config.rpmCache ? " 用户/分 缓存对话" : " 请求/分") + " " + config.durationSeconds + "s")
       : mode === "image"
-      ? ("图片生成 一次性 " + config.concurrency + " 张 " + config.imageSize)
-      : mode === "burst"
-      ? ("独立请求 一次性 " + config.concurrency + " 个")
-      : ("连续对话 " + config.concurrency + "并发 " + config.durationSeconds + "s");
+      ? ("图片生成 " + imageModel + " " + (config.imageMode === "rpm" ? (config.targetRpm + " rpm") : ("一次性 " + config.concurrency + " 张")) + " " + (config.imageSizeMode === "mixed" ? "混合尺寸" : config.imageSize))
+      : "压测运行中";
     setRunningState(config, runLabel);
     clearInterval(pollTimer);
     poll();
@@ -538,16 +1001,71 @@ function start() {
 function stop() {
   $("btnStop").disabled = true;
   $("statusText").textContent = "停止中，等待收尾...";
-  fetch("/api/stop", { method: "POST" }).catch(function(){});
+  apiFetch("/api/stop", { method: "POST" }).catch(function(){});
+}
+
+function fmtSec(ms) {
+  return (Number(ms || 0) / 1000).toFixed(2) + "s";
+}
+
+function updateSequenceBanner(seq) {
+  var banner = $("sequenceBanner");
+  var text = $("sequenceBannerText");
+  if (!banner || !text) return;
+  if (!seq || !seq.enabled) {
+    banner.classList.add("hidden");
+    text.textContent = "";
+    return;
+  }
+  var done = seq.completedModels || 0;
+  var total = seq.totalModels || 0;
+  var current = seq.currentModel || "收尾中";
+  var title = banner.querySelector("strong");
+  var isWorkers = seq.mode === "workers";
+  if (title) title.textContent = isWorkers ? "多 Worker 分摊" : "多模型顺序测试";
+  if (isWorkers) {
+    text.textContent = "Worker 分摊运行中：" + current + "  ·  完成 " + done + "/" + total + " 个 worker";
+  } else {
+    text.textContent = "当前正在跑：" + current + "  ·  进度 " + done + "/" + total;
+  }
+  banner.classList.remove("hidden");
+}
+
+function sequenceStatusText(seq) {
+  if (!seq || !seq.enabled) return "";
+  if (seq.mode === "workers") {
+    return " · Worker 分摊 " + (seq.completedModels || 0) + "/" + (seq.totalModels || 0) + " 完成 · " + (seq.currentModel || "收尾中");
+  }
+  var current = seq.currentModel ? ("当前 " + seq.currentModel) : "收尾中";
+  return " · 顺序队列 " + (seq.completedModels || 0) + "/" + (seq.totalModels || 0) + " · " + current;
+}
+
+// 多模型随机混合：实时显示每个模型的 完成/成功 进度（复用顺序测试的 banner 区）
+function updateMultiModelMixedBanner(s) {
+  var banner = $("sequenceBanner");
+  var text = $("sequenceBannerText");
+  var title = banner ? banner.querySelector("strong") : null;
+  if (!banner || !text) return;
+  if (!s || !s.multiModelMixed) return;   // 非混合不处理（顺序 banner 已由 updateSequenceBanner 管）
+  var live = Array.isArray(s.modelLive) ? s.modelLive.slice() : [];
+  live.sort(function(a, b) { return (b.done || 0) - (a.done || 0); });
+  var parts = live.map(function(m) {
+    return m.model + "：完成 " + (m.done || 0) + "（成功 " + (m.success || 0) + (m.fail ? "，失败 " + m.fail : "") + "，均延 " + (m.avgLatency || 0) + "s）";
+  });
+  if (title) title.textContent = "多模型随机混合";
+  text.textContent = parts.length ? ("  " + parts.join("　|　")) : "  正在分发到各模型…";
+  banner.classList.remove("hidden");
 }
 
 // ---- 轮询 ----
 function poll() {
-  fetch("/api/snapshot").then(function(r) { return r.json(); }).then(function(s) {
+  apiFetch("/api/snapshot").then(function(r) { return r.json(); }).then(function(s) {
     if (s.config) {
       _activeConfig = s.config;
       applyConfig(s.config);
     }
+    updateSequenceBanner(s.sequence);
+    updateMultiModelMixedBanner(s);
     $("elapsedLabel").textContent = s.elapsed;
     $("mTotal").textContent = s.totalDone;
     $("mOk").textContent = s.success;
@@ -556,8 +1074,9 @@ function poll() {
     $("mQPS").textContent = s.qps;
     $("mCache").textContent = s.cacheHits;
     var mode = (s.config && s.config.mode) || $("mode").value;
-    var isRpmMode = (mode === "rpm");
-    var isBatch = (mode === "burst" || mode === "image");
+    var imageRpmMode = mode === "image" && s.config && s.config.imageMode === "rpm";
+    var isRpmMode = (mode === "rpm") || imageRpmMode;
+    var isBatch = (mode === "burst") || (mode === "image" && !imageRpmMode);
     if (isRpmMode) {
       if ($("boxRpm")) $("boxRpm").style.display = "";
       if ($("boxInflight")) $("boxInflight").style.display = "";
@@ -583,18 +1102,22 @@ function poll() {
     if (s.status === "running") {
       var runMsg = isBatch
         ? ("压测中... " + s.totalDone + " / " + ((s.config && s.config.concurrency) || "?") + " 完成")
-        : ("压测运行中... " + ((s.config && s.config.durationSeconds) || "?") + "s / 已运行 " + s.elapsed);
+        : (imageRpmMode
+          ? ("图片 RPM 压测中... 目标 " + ((s.config && s.config.targetRpm) || "?") + " rpm / 已发 " + (s.totalSent || 0) + " / 完成 " + (s.totalDone || 0) + " / 已运行 " + s.elapsed)
+          : ("压测运行中... " + ((s.config && s.config.durationSeconds) || "?") + "s / 已运行 " + s.elapsed));
+      runMsg += sequenceStatusText(s.sequence);
       setRunningState(s.config, runMsg);
       return;
     }
     if (s.status === "stopping") {
-      setRunningState(s.config, "停止中，等待收尾... 已运行 " + s.elapsed);
+      setRunningState(s.config, "停止中，等待收尾... 已运行 " + s.elapsed + sequenceStatusText(s.sequence));
       $("btnStop").disabled = true;
       return;
     }
     if (s.status === "done") {
       clearInterval(pollTimer);
       resetUI();
+      updateSequenceBanner(null);
       $("statusText").textContent = "✅ 压测完成";
       showReport();
       return;
@@ -602,6 +1125,7 @@ function poll() {
     if (s.status === "idle") {
       clearInterval(pollTimer);
       resetUI();
+      updateSequenceBanner(null);
       if ($("statusText").textContent.indexOf("停止中") === 0) $("statusText").textContent = "已停止";
     }
   }).catch(function(){});
@@ -609,24 +1133,38 @@ function poll() {
 
 // ---- 报告 ----
 function showReport() {
-  fetch("/api/report").then(function(r) { return r.json(); }).then(function(d) {
+  apiFetch("/api/report").then(function(r) { return r.json(); }).then(function(d) {
     if (!d || !d.summary) return;
     _report = d;
+    var reportLabel = (d.config && typeof d.config.reportLabel === "string" ? d.config.reportLabel : "") || $("reportLabel").value.trim();
     var s = d.summary, l = d.latency;
+    var isImageReport = !!(d.config && d.config.mode === "image");
+    var gradeInfo = computeCompositeGrade(s, l, isImageReport, d.config && d.config.imageSize);
+    var showCompositeGrade = shouldShowCompositeGrade(isImageReport);
     var rate = parseFloat(s.successRate);
-    var gc = rate >= 85 ? "#3fb950" : rate >= 60 ? "#d2991d" : "#f85149";
+    var gc = showCompositeGrade ? gradeInfo.color : "#58a6ff";
     var models = (d.config && d.config.models || []).join(", ");
     var reportMeta = [];
     if (d.startedAt) reportMeta.push("开始 " + formatTime(d.startedAt));
     if (d.endedAt) reportMeta.push("结束 " + formatTime(d.endedAt));
     if (d.reportPath) reportMeta.push("归档 " + d.reportPath);
+    if (d.sequence && d.sequence.enabled) reportMeta.push("顺序排队：每个模型单独吃满完整负载");
+    if (d.multiModelMixed) reportMeta.push("多模型随机混合：请求均匀摊到 " + (d.config && d.config.models ? d.config.models.length : 0) + " 个模型，各模型明细见下方「各模型表现」");
 
     var h = '<div class="card">';
     h += '<div class="report-header">';
     h += '<div class="report-meta"><div style="font-size:14px;font-weight:600;color:#e6edf3;margin-bottom:4px">📋 ' + (reportLabel || "压测报告") + '</div>';
     var headerLine = '模型 <strong>' + models + '</strong> · ';
-    if (d.testMode === "图片生成压测") {
-      headerLine += '图片生成 · 尺寸 <strong>' + (d.config.imageSize || "1024x1024") + '</strong> · quality=low · 并发 <strong>' + s.concurrency + '</strong>';
+    if (isImageReport) {
+      var imageSizeText = d.config.imageSizeMode === "mixed" ? "混合尺寸" : (d.config.imageSize || "1024x1024");
+      var imageQualityText = d.config.imageQualityMode === "mixed" ? "low/medium/high 混合" : "low 固定";
+      var imageWorkloadText = d.config.imageWorkloadMode === "mixed" ? "文生图+图生图需求混合" : (d.config.imageWorkloadMode === "image-to-image-intent" ? "图生图需求" : "文生图");
+      headerLine += '图片生成 · <strong>' + imageWorkloadText + '</strong> · 尺寸 <strong>' + imageSizeText + '</strong> · 档位 <strong>' + imageQualityText + '</strong>';
+      if (s.targetRpm) {
+        headerLine += ' · 目标 <strong>' + s.targetRpm + ' rpm</strong> · 实际 <strong>' + (s.actualRpm || 0) + ' rpm</strong> · 峰值在途 <strong>' + (s.peakInflight || 0) + '</strong>';
+      } else {
+        headerLine += ' · 并发 <strong>' + s.concurrency + '</strong>';
+      }
     } else if (s.targetRpm) {
       headerLine += '目标 <strong>' + s.targetRpm + ' rpm</strong> · 实际 <strong>' + (s.actualRpm || 0) + ' rpm</strong> · 峰值在途 <strong>' + (s.peakInflight || 0) + '</strong>';
     } else {
@@ -634,6 +1172,13 @@ function showReport() {
       if (s.equivalentRpm) headerLine += ' (≈ <strong>' + s.equivalentRpm + ' rpm</strong> 等效)';
     }
     headerLine += ' · 实测 <strong>' + s.duration + '</strong>';
+    // 真实流量参数提示（图片模式无此概念）
+    if (!isImageReport && d.config) {
+      var scaleMap = { short: "短", medium: "中", long: "长" };
+      var scaleTxt = scaleMap[d.config.contextScale] || d.config.contextScale || "中";
+      headerLine += ' · 上下文 <strong>' + scaleTxt + '</strong>';
+      headerLine += ' · 随机参数 <strong>' + (d.config.randomParams ? "开" : "关") + '</strong>';
+    }
     h += headerLine;
     if (reportMeta.length) h += '<br>' + reportMeta.join(" · ");
     h += '</div>';
@@ -652,27 +1197,56 @@ function showReport() {
     h += '</div>';
 
     h += '<div class="metrics-row">';
-    h += '<div class="metric-box"><div class="val">' + s.totalDone + '</div><div class="lbl">总请求</div></div>';
-    h += '<div class="metric-box"><div class="val val-ok">' + s.success + '</div><div class="lbl">成功</div></div>';
-    h += '<div class="metric-box"><div class="val val-err">' + s.fail + '</div><div class="lbl">失败</div></div>';
-    h += '<div class="metric-box"><div class="val val-warn">' + (s.rateLimited || 0) + '</div><div class="lbl">限流(429)</div></div>';
-    h += '<div class="metric-box"><div class="val">' + s.qps + '</div><div class="lbl">' + (d.testMode === "图片生成压测" ? "图/秒" : "QPS") + '</div></div>';
-    if (d.testMode === "图片生成压测") {
-      var ipm = (parseFloat(s.qps) * 60).toFixed(1);
-      h += '<div class="metric-box"><div class="val">' + ipm + '</div><div class="lbl">图/分钟</div></div>';
-    } else if (s.targetRpm) {
-      h += '<div class="metric-box"><div class="val">' + (s.actualRpm || 0) + '</div><div class="lbl">实际RPM</div></div>';
-      h += '<div class="metric-box"><div class="val val-warn">' + (s.peakInflight || 0) + '</div><div class="lbl">峰值在途并发</div></div>';
-    } else if (s.equivalentRpm) {
-      h += '<div class="metric-box"><div class="val">' + s.equivalentRpm + '</div><div class="lbl">等效RPM</div></div>';
+    if (showCompositeGrade) {
+      h += '<div class="metric-box"><div class="val">' + gradeInfo.score.toFixed(1) + '</div><div class="lbl">综合评分</div></div>';
     }
-    if (d.testMode !== "图片生成压测") {
-      h += '<div class="metric-box"><div class="val val-warn">' + s.cacheHitRate + '</div><div class="lbl">Cache 命中率</div></div>';
+    buildTopMetricCards(d, { max: isImageReport ? 8 : 7 }).forEach(function(c) {
+      var cls = c.color === "#2e7d32" ? " val-ok" : (c.color === "#e65100" ? " val-warn" : "");
+      var style = cls ? "" : (c.color ? ' style="color:' + c.color + '"' : "");
+      h += '<div class="metric-box"><div class="val' + cls + '"' + style + '>' + c.value + '</div><div class="lbl">' + c.label + '</div></div>';
+    });
+    if (!isImageReport) {
+      var cacheDisplay = s.cacheHitDisplay || s.cacheHitRate || "N/A";
+      var warmedCacheDisplay = s.warmedCacheHitDisplay || s.warmedCacheHitRate || "N/A";
+      var cacheSmall = '<div style="font-size:11px;color:#8b949e;margin-top:4px">第1轮用于创建缓存，不计入命中率 · 第2轮起当前为 ' + warmedCacheDisplay + '</div>';
+      h += '<div class="metric-box"><div class="val val-warn">' + cacheDisplay + '</div><div class="lbl">Cache 命中率（第2轮起）</div>' + cacheSmall + '</div>';
     }
     h += '<div class="metric-box"><div class="val">' + s.conversationsDone + '</div><div class="lbl">会话完成</div></div>';
     h += '</div>';
 
-    h += '<div class="section-title">⏱️ 延迟分布 (成功请求, ms)</div>';
+    if (isImageReport && d.imageCaseStats) {
+      function statRows(title, map) {
+        var keys = Object.keys(map || {}).sort();
+        if (!keys.length) return "";
+        var total = keys.reduce(function(sum, key) { return sum + (Number(map[key]) || 0); }, 0) || 1;
+        var out = '<div class="tbl-wrap" style="margin-top:8px"><table class="tbl"><thead><tr><th colspan="3" style="text-align:left">' + title + '</th></tr><tr><th>项目</th><th>数量</th><th>占比</th></tr></thead><tbody>';
+        keys.forEach(function(key) {
+          var count = Number(map[key]) || 0;
+          out += '<tr><td>' + key + '</td><td>' + count + '</td><td>' + ((count / total) * 100).toFixed(1) + '%</td></tr>';
+        });
+        out += '</tbody></table></div>';
+        return out;
+      }
+      h += '<div class="section-title">🧩 混合生图分布</div>';
+      h += '<div style="font-size:12px;color:#8b949e;line-height:1.7;margin-bottom:6px">每条请求都会生成独立提示词，并按工作类型、尺寸、档位轮转；图生图为“只发送制图需求”的模拟，不上传素材。</div>';
+      h += statRows("工作类型", d.imageCaseStats.workload);
+      h += statRows("尺寸", d.imageCaseStats.size);
+      h += statRows("清晰度档位", d.imageCaseStats.quality);
+    }
+
+    if (d.sequence && d.sequence.enabled && d.modelRuns && d.modelRuns.length) {
+      h += '<div class="section-title">📚 顺序测试队列</div>';
+      h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>顺序</th><th>模型</th><th>负载</th><th>成功率</th><th>平均</th><th>P95</th><th>时长</th></tr></thead><tbody>';
+      d.modelRuns.forEach(function(run) {
+        var rs = run.summary || {}, rl = run.latency || {};
+        var badge = parseFloat(String(rs.successRate || "0").replace("%","")) >= 90 ? "ok" : (parseFloat(String(rs.successRate || "0").replace("%","")) >= 50 ? "warn" : "err");
+        var loadText = rs.targetRpm ? (rs.targetRpm + ' rpm') : ('并发 ' + (rs.concurrency || d.config.concurrency));
+        h += '<tr><td>#' + run.order + '</td><td>' + run.model + '</td><td>' + loadText + '</td><td><span class="badge badge-' + badge + '">' + (rs.successRate || "0%") + '</span></td><td>' + fmtSec(rl.avg) + '</td><td>' + fmtSec(rl.p95) + '</td><td>' + (rs.duration || "-") + '</td></tr>';
+      });
+      h += '</tbody></table></div>';
+    }
+
+    h += '<div class="section-title">⏱️ 延迟分布 (成功请求, s)</div>';
     h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>指标</th><th>延迟(s)</th></tr></thead><tbody>';
     h += '<tr><td>平均</td><td class="hl">' + (Number(l.avg)/1000).toFixed(3) + '</td></tr>';
     h += '<tr><td>最小</td><td>' + (Number(l.min)/1000).toFixed(3) + '</td></tr>';
@@ -683,14 +1257,33 @@ function showReport() {
     h += '<tr><td>P99</td><td>' + (Number(l.p99)/1000).toFixed(3) + '</td></tr>';
     h += '</tbody></table></div>';
 
-    if (d.perTurnCache && d.perTurnCache.length) {
+    if (!isImageReport && d.perTurnCache && d.perTurnCache.length) {
       h += '<div class="section-title">💾 逐轮 Cache 命中率</div>';
+      h += '<div style="font-size:12px;color:#8b949e;line-height:1.7;margin-bottom:6px">主命中率只统计第2轮起；第1轮主要用于创建缓存，不计入总命中率。</div>';
       h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>轮次</th><th>请求数</th><th>Cache命中</th><th>命中率</th></tr></thead><tbody>';
       d.perTurnCache.forEach(function(t) {
-        var b = parseFloat(t.rate) >= 50 ? "ok" : (parseFloat(t.rate) > 0 ? "warn" : "err");
-        h += '<tr><td>第' + t.turn + '轮</td><td>' + t.total + '</td><td>' + t.hits + '</td><td><span class="badge badge-' + b + '">' + t.rate + '%</span></td></tr>';
+        var turnNum = parseInt(t.turn, 10);
+        var isCreateTurn = turnNum === 1;
+        var b = isCreateTurn ? "warn" : (parseFloat(t.rate) >= 50 ? "ok" : (parseFloat(t.rate) > 0 ? "warn" : "err"));
+        var hitText = isCreateTurn ? (t.hits + '（仅展示，不计总命中）') : String(t.hits);
+        h += '<tr><td>第' + t.turn + '轮</td><td>' + t.total + '</td><td>' + hitText + '</td><td><span class="badge badge-' + b + '">' + t.rate + '%</span></td></tr>';
       });
       h += '</tbody></table></div>';
+
+      // 缓存 Token 明细 + 判定 —— 区分「没写缓存」(疑路由/后端不支持) vs「写了读不到」(疑会话打散)
+      h += '<div class="section-title">🔬 缓存 Token 明细（诊断 0 命中用）</div>';
+      h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>模型</th><th>写入(creation)</th><th>读取(read)</th><th>判定</th></tr></thead><tbody>';
+      (d.models || []).forEach(function(m) {
+        var cw = Number(m.cacheCreateTokens || 0);
+        var cr = Number(m.cacheReadTokens || 0);
+        var verdict, vb;
+        if (cr > 0) { verdict = '正常命中'; vb = 'ok'; }
+        else if (cw > 0) { verdict = '写了读不到（疑会话被打散到多上游）'; vb = 'warn'; }
+        else { verdict = '后端未建缓存（疑渠道路由/该后端不支持 cache）'; vb = 'err'; }
+        h += '<tr><td>' + m.model + '</td><td>' + cw.toLocaleString() + '</td><td>' + cr.toLocaleString() + '</td><td><span class="badge badge-' + vb + '">' + verdict + '</span></td></tr>';
+      });
+      h += '</tbody></table></div>';
+      h += '<div style="font-size:11px;color:#6e7681;margin-top:6px;line-height:1.6">写入=0 且 读取=0 → 该模型在这条渠道上压根没建缓存，基本是渠道把它路由到了不支持/不粘的后端，工具改不了，拿 request_id 找渠道。写入&gt;0 但读取=0 → 缓存写了却读不到，是会话被打散（写在节点A、读到节点B）。</div>';
     }
 
     h += '<div class="section-title">🤖 各模型表现</div>';
@@ -706,11 +1299,65 @@ function showReport() {
     });
     h += '</tbody></table></div>';
 
+    if (d.sequence && d.sequence.enabled && d.modelRuns && d.modelRuns.length) {
+      h += '<div class="section-title">🧾 各模型独立结果</div>';
+      d.modelRuns.forEach(function(run) {
+        var rs = run.summary || {}, rl = run.latency || {};
+        var runRate = parseFloat(String(rs.successRate || "0").replace("%",""));
+        var runColor = runRate >= 85 ? "#3fb950" : runRate >= 60 ? "#d2991d" : "#f85149";
+        h += '<div style="border:1px solid #21262d;border-radius:8px;padding:14px 16px;margin-bottom:12px;background:#0d1117">';
+        h += '<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px">';
+        h += '<div style="font-size:14px;font-weight:600;color:#e6edf3">#' + run.order + ' ' + run.model + '</div>';
+        h += '<div style="font-size:12px;color:#8b949e">负载 ' + (rs.targetRpm ? (rs.targetRpm + ' rpm') : ('并发 ' + (rs.concurrency || d.config.concurrency))) + ' · 时长 ' + (rs.duration || "-") + '</div>';
+        h += '</div>';
+        h += '<div class="metrics-row" style="margin-bottom:10px">';
+        h += '<div class="metric-box"><div class="val" style="color:' + runColor + '">' + (rs.successRate || "0%") + '</div><div class="lbl">成功率</div></div>';
+        h += '<div class="metric-box"><div class="val">' + fmtSec(rl.avg) + '</div><div class="lbl">平均</div></div>';
+        h += '<div class="metric-box"><div class="val">' + fmtSec(rl.p95) + '</div><div class="lbl">P95</div></div>';
+        h += '<div class="metric-box"><div class="val">' + (rs.actualRpm || rs.equivalentRpm || 0) + '</div><div class="lbl">' + (rs.targetRpm ? "实际RPM" : "等效RPM") + '</div></div>';
+        h += '</div>';
+        if (run.errorSummary && run.errorSummary.length) {
+          h += '<div style="font-size:11px;color:#8b949e">主要错误：' + run.errorSummary.slice(0, 3).map(function(e) { return e.type + '×' + e.count; }).join('，') + '</div>';
+        }
+        h += '</div>';
+      });
+    }
+
+    if (d.deliveryHint && d.deliveryHint.severity && d.deliveryHint.severity !== "none") {
+      var dh = d.deliveryHint;
+      var dColor = dh.severity === "warn" ? "#d2991d" : "#58a6ff";
+      h += '<div class="section-title" style="color:' + dColor + '">🩺 返回成功，但链路可能抖动</div>';
+      h += '<div style="border:1px solid #21262d;border-radius:8px;padding:14px 16px;margin-bottom:20px;background:#0d1117">';
+      h += '<div style="font-size:13px;line-height:1.7;color:#c9d1d9">' + dh.note + '</div>';
+      if (dh.signals && dh.signals.length) {
+        h += '<div style="font-size:12px;color:#8b949e;margin-top:8px">命中信号：' + dh.signals.join('；') + '</div>';
+      }
+      h += '<div style="font-size:12px;color:#8b949e;margin-top:6px">采样成功响应 ' + (dh.sampleCount || 0) + ' 条';
+      if (dh.samplesWithProcessingMs) h += ' · 带 processing_ms ' + dh.samplesWithProcessingMs + ' 条';
+      if (dh.samplesWithRetryHint) h += ' · 带 retry 标记 ' + dh.samplesWithRetryHint + ' 条';
+      if (dh.samplesWithUpstreamStatus) h += ' · 带 upstream status ' + dh.samplesWithUpstreamStatus + ' 条';
+      if (dh.samplesWithSlowGap) h += ' · 总耗时显著高于处理耗时 ' + dh.samplesWithSlowGap + ' 条';
+      h += '</div>';
+      if (dh.sampleRequestIds && dh.sampleRequestIds.length) {
+        h += '<div style="font-size:11px;color:#6e7681;margin-top:6px">样例 request id：' + dh.sampleRequestIds.join('，') + '</div>';
+      }
+      h += '<div style="font-size:11px;color:#6e7681;margin-top:8px">返回成功了，但中间可能经历过重试、切换或排队。</div>';
+      h += '</div>';
+    }
+
     if (d.errorSummary && d.errorSummary.length) {
       h += '<div class="section-title" style="color:#f85149">❌ 错误分布</div>';
       h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>错误类型</th><th>次数</th></tr></thead><tbody>';
       d.errorSummary.forEach(function(e) { h += '<tr><td>' + (e.type || "").slice(0, 80) + '</td><td>' + e.count + '</td></tr>'; });
       h += '</tbody></table></div>';
+    }
+    h += renderErrorSamples(d.errorSamples);
+    if (showCompositeGrade) {
+      h += '<div class="section-title">🏁 综合评分</div>';
+      h += '<div style="border:1px solid #21262d;border-radius:8px;padding:14px 16px;margin-bottom:20px;background:#0d1117">';
+      h += '<div style="font-size:16px;font-weight:700;color:' + gradeInfo.color + '">综合评分 ' + gradeInfo.score.toFixed(1) + ' / 100</div>';
+      h += '<div style="font-size:12px;color:#8b949e;margin-top:8px;line-height:1.8">' + gradeInfo.reasons.join(' · ') + '</div>';
+      h += '</div>';
     }
     h += '</div>';
     $("reportWrap").innerHTML = h;
@@ -720,28 +1367,63 @@ function showReport() {
 function copyText() {
   if (!_report) return;
   var d = _report, s = d.summary, l = d.latency;
+  var isImageReport = !!(d.config && d.config.mode === "image");
   var models = (d.config && d.config.models || []).join(",");
   var loadLine = s.targetRpm
     ? ("目标" + s.targetRpm + "rpm 实际" + (s.actualRpm || 0) + "rpm 峰值在途" + (s.peakInflight || 0))
     : ("并发" + s.concurrency + (s.equivalentRpm ? " (≈" + s.equivalentRpm + "rpm)" : ""));
+  var gradeInfo = computeCompositeGrade(s, l, isImageReport, d.config && d.config.imageSize);
+  var showCompositeGrade = shouldShowCompositeGrade(isImageReport);
   var lines = [
     "模型 " + models + "  " + loadLine + "  实测" + s.duration + "  " + new Date().toISOString(),
     "", "成功率: " + s.successRate,
     "限流(429): " + (s.rateLimited || 0),
-    "平均延迟: " + Number(l.avg).toFixed(2) + " ms",
-    "最小延迟: " + Number(l.min).toFixed(2) + " ms",
-    "最大延迟: " + Number(l.max).toFixed(2) + " ms",
-    "", "指标      延迟(ms)", "平均       " + Number(l.avg).toFixed(2),
-    Number(l.min).toFixed(2) + " — " + Number(l.max).toFixed(2),
-    "P50        " + Number(l.p50).toFixed(2),
-    "P90        " + Number(l.p90).toFixed(2),
-    "P95        " + Number(l.p95).toFixed(2),
-    "P99        " + Number(l.p99).toFixed(2),
-    "", "QPS: " + s.qps + "  |  Cache命中率: " + s.cacheHitRate, "", "各模型:",
+    "平均延迟: " + (Number(l.avg) / 1000).toFixed(3) + " s",
+    "最小延迟: " + (Number(l.min) / 1000).toFixed(3) + " s",
+    "最大延迟: " + (Number(l.max) / 1000).toFixed(3) + " s",
+    "", "指标      延迟(s)", "平均       " + (Number(l.avg) / 1000).toFixed(3),
+    (Number(l.min) / 1000).toFixed(3) + " — " + (Number(l.max) / 1000).toFixed(3),
+    "P50        " + (Number(l.p50) / 1000).toFixed(3),
+    "P90        " + (Number(l.p90) / 1000).toFixed(3),
+    "P95        " + (Number(l.p95) / 1000).toFixed(3),
+    "P99        " + (Number(l.p99) / 1000).toFixed(3),
+    "", (isImageReport ? ("图/秒: " + s.qps) : ("QPS: " + s.qps + "  |  Cache命中率(第2轮起): " + (s.cacheHitDisplay || s.cacheHitRate) + "  |  第1轮: 创建缓存(不计入)")), "", "各模型:",
   ];
-  d.models.forEach(function(m) { lines.push("  " + m.model + ": " + m.rate + "% 平均" + Number(m.avgLatency).toFixed(0) + "ms P95=" + Number(m.p95).toFixed(0) + "ms"); });
-  if (d.perTurnCache && d.perTurnCache.length) {
-    lines.push(""); lines.push("逐轮Cache: " + d.perTurnCache.map(function(t) { return "第" + t.turn + "轮 " + t.rate + "%"; }).join(", "));
+  if (showCompositeGrade) {
+    lines.splice(2, 0, "", "综合评分: " + gradeInfo.score.toFixed(1) + "/100", "评分说明: " + gradeInfo.reasons.join("；"));
+  }
+  d.models.forEach(function(m) { lines.push("  " + m.model + ": " + m.rate + "% 平均" + (Number(m.avgLatency) / 1000).toFixed(2) + "s P95=" + (Number(m.p95) / 1000).toFixed(2) + "s"); });
+  if (d.sequence && d.sequence.enabled && d.modelRuns && d.modelRuns.length) {
+    lines.push("");
+    lines.push("顺序测试队列:");
+    d.modelRuns.forEach(function(run) {
+      var rs = run.summary || {}, rl = run.latency || {};
+      lines.push("  #" + run.order + " " + run.model + "  负载" + (rs.targetRpm ? (rs.targetRpm + "rpm") : ("并发" + (rs.concurrency || d.config.concurrency))) + "  成功率" + (rs.successRate || "0%") + "  平均" + (Number(rl.avg) / 1000).toFixed(2) + "s  P95=" + (Number(rl.p95) / 1000).toFixed(2) + "s");
+    });
+  }
+  if (d.deliveryHint && d.deliveryHint.severity && d.deliveryHint.severity !== "none") {
+    lines.push("");
+    lines.push("返回成功，但链路可能抖动: " + (d.deliveryHint.note || ""));
+    if (d.deliveryHint.signals && d.deliveryHint.signals.length) {
+      lines.push("命中信号: " + d.deliveryHint.signals.join("；"));
+    }
+    lines.push(
+      "采样成功响应: " + (d.deliveryHint.sampleCount || 0) +
+      " 条" +
+      ((d.deliveryHint.samplesWithProcessingMs || 0) ? ("  processing_ms=" + d.deliveryHint.samplesWithProcessingMs) : "") +
+      ((d.deliveryHint.samplesWithRetryHint || 0) ? ("  retry=" + d.deliveryHint.samplesWithRetryHint) : "") +
+      ((d.deliveryHint.samplesWithUpstreamStatus || 0) ? ("  upstream_status=" + d.deliveryHint.samplesWithUpstreamStatus) : "") +
+      ((d.deliveryHint.samplesWithSlowGap || 0) ? ("  slow_gap=" + d.deliveryHint.samplesWithSlowGap) : "")
+    );
+    if (d.deliveryHint.sampleRequestIds && d.deliveryHint.sampleRequestIds.length) {
+      lines.push("样例 request id: " + d.deliveryHint.sampleRequestIds.join(", "));
+    }
+  }
+  if (!isImageReport && d.perTurnCache && d.perTurnCache.length) {
+    lines.push("");
+    lines.push("Cache命中率(第2轮起): " + (s.cacheHitDisplay || s.cacheHitRate || "N/A"));
+    lines.push("第1轮: 创建缓存，不计入命中率");
+    lines.push("逐轮Cache: " + d.perTurnCache.map(function(t) { return "第" + t.turn + "轮 " + t.rate + "%"; }).join(", "));
   }
   navigator.clipboard.writeText(lines.join("\n")).then(function() { alert("已复制到剪贴板"); });
 }
@@ -758,6 +1440,7 @@ function downloadJSON() {
 function downloadPDF() {
   if (!_report) return;
   var d = _report, s = d.summary, l = d.latency;
+  var isImageReport = !!(d.config && d.config.mode === "image");
   var models = (d.config && d.config.models || []).join(", ");
 
   var css = '<style>';
@@ -793,9 +1476,9 @@ function downloadPDF() {
   css += '@media print{body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}';
   css += '</style>';
 
-  var rate = parseFloat(s.successRate);
-  var grade = rate >= 95 ? "A+" : rate >= 80 ? "A" : rate >= 60 ? "B" : "C";
-  var gc = rate >= 95 ? "#2e7d32" : rate >= 80 ? "#0071e3" : rate >= 60 ? "#e65100" : "#c62828";
+  var gradeInfo = computeCompositeGrade(s, l, isImageReport, d.config && d.config.imageSize);
+  var showCompositeGrade = shouldShowCompositeGrade(isImageReport);
+  var gc = showCompositeGrade ? gradeInfo.color : "#58a6ff";
 
   var reportLabel = (d.config && d.config.reportLabel) || $("reportLabel").value.trim();
   var title = reportLabel || "渠道压力测试报告";
@@ -809,24 +1492,41 @@ function downloadPDF() {
     pdfSub += '并发' + s.concurrency;
     if (s.equivalentRpm) pdfSub += ' (≈' + s.equivalentRpm + ' rpm)';
   }
+  if (d.sequence && d.sequence.enabled) pdfSub += ' · 顺序排队';
   pdfSub += ' · ' + s.duration + ' · ' + new Date().toISOString();
   html += '<div><h1>📊 ' + title + '</h1><div class="sub">' + pdfSub + '</div></div>';
   html += '</div>';
 
   html += '<div class="grade-box">';
-  html += '<div class="big" style="color:' + gc + '">' + grade + '</div>';
-  html += '<div class="info"><strong>成功率</strong> ' + s.successRate + '<br><strong>平均延迟</strong> ' + Number(l.avg).toFixed(1) + 'ms<br><strong>QPS</strong> ' + s.qps + '<br><strong>Cache命中率</strong> ' + (s.cacheHitRate || "N/A") + '</div>';
+  if (showCompositeGrade) {
+    html += '<div class="big" style="color:' + gc + '">' + gradeInfo.score.toFixed(1) + '</div>';
+    html += '<div class="info"><strong>综合评分</strong> ' + gradeInfo.score.toFixed(1) + '/100<br><strong>成功率</strong> ' + s.successRate + '<br><strong>平均延迟</strong> ' + (Number(l.avg) / 1000).toFixed(3) + 's<br><strong>' + (isImageReport ? '图/秒' : 'QPS') + '</strong> ' + s.qps + (isImageReport ? '' : ('<br><strong>Cache命中率</strong> ' + (s.cacheHitDisplay || s.cacheHitRate || "N/A") + '（第2轮起）<br><strong>第1轮</strong> 创建缓存，不计入命中率')) + '</div>';
+  } else {
+    html += '<div class="big" style="color:' + gc + '">' + s.successRate + '</div>';
+    html += '<div class="info"><strong>成功率</strong> ' + s.successRate + '<br><strong>平均延迟</strong> ' + (Number(l.avg) / 1000).toFixed(3) + 's<br><strong>P95延迟</strong> ' + (Number(l.p95) / 1000).toFixed(3) + 's<br><strong>图/秒</strong> ' + s.qps + '</div>';
+  }
   html += '</div>';
 
-  html += '<div class="grid-5">';
-  html += '<div class="grid-item"><div class="val">' + s.totalDone + '</div><div class="lbl">总请求</div></div>';
-  html += '<div class="grid-item"><div class="val" style="color:#2e7d32">' + s.success + '</div><div class="lbl">成功</div></div>';
-  html += '<div class="grid-item"><div class="val" style="color:#c62828">' + s.fail + '</div><div class="lbl">失败</div></div>';
-  html += '<div class="grid-item"><div class="val" style="color:#e65100">' + (s.rateLimited || 0) + '</div><div class="lbl">限流(429)</div></div>';
-  html += '<div class="grid-item"><div class="val" style="color:#0071e3">' + s.qps + '</div><div class="lbl">QPS</div></div>';
+  html += '<div class="grid-4">';
+  buildTopMetricCards(d, { max: 8 }).forEach(function(c) {
+    var style = c.color ? ' style="color:' + c.color + '"' : '';
+    html += '<div class="grid-item"><div class="val"' + style + '>' + c.value + '</div><div class="lbl">' + c.label + '</div></div>';
+  });
   html += '</div>';
 
-  if (d.perTurnCache && d.perTurnCache.length) {
+  if (d.sequence && d.sequence.enabled && d.modelRuns && d.modelRuns.length) {
+    html += '<div class="section"><h2>📚 顺序测试队列</h2><table>';
+    html += '<tr><th>顺序</th><th>模型</th><th>负载</th><th>成功率</th><th>平均</th><th>P95</th><th>时长</th></tr>';
+    d.modelRuns.forEach(function(run) {
+      var rs = run.summary || {}, rl = run.latency || {};
+      var badge = parseFloat(String(rs.successRate || "0").replace("%","")) >= 90 ? "badge-ok" : (parseFloat(String(rs.successRate || "0").replace("%","")) >= 50 ? "badge-warn" : "badge-err");
+      var loadText = rs.targetRpm ? (rs.targetRpm + ' rpm') : ('并发 ' + (rs.concurrency || d.config.concurrency));
+      html += '<tr><td>#' + run.order + '</td><td style="font-weight:600">' + run.model + '</td><td>' + loadText + '</td><td><span class="badge ' + badge + '">' + (rs.successRate || "0%") + '</span></td><td>' + fmtSec(rl.avg) + '</td><td>' + fmtSec(rl.p95) + '</td><td>' + (rs.duration || "-") + '</td></tr>';
+    });
+    html += '</table></div>';
+  }
+
+  if (!isImageReport && d.perTurnCache && d.perTurnCache.length) {
     html += '<div class="section" style="text-align:center"><h2>💾 Prompt Cache</h2><table>';
     html += '<tr><th>轮次</th><th>请求</th><th>说明</th><th>命中率</th></tr>';
     d.perTurnCache.forEach(function(t) {
@@ -836,17 +1536,31 @@ function downloadPDF() {
       html += '<tr><td>第' + t.turn + '轮</td><td>' + t.total + '</td><td>' + label + '</td><td><span class="badge ' + b + '">' + t.rate + '%</span></td></tr>';
     });
     html += '</table></div>';
+
+    // 缓存 Token 明细 + 判定（诊断 0 命中）
+    html += '<div class="section"><h2>🔬 缓存 Token 明细（诊断 0 命中）</h2><table>';
+    html += '<tr><th>模型</th><th>写入(creation)</th><th>读取(read)</th><th>判定</th></tr>';
+    (d.models || []).forEach(function(m) {
+      var cw = Number(m.cacheCreateTokens || 0);
+      var cr = Number(m.cacheReadTokens || 0);
+      var verdict, vb;
+      if (cr > 0) { verdict = '正常命中'; vb = 'badge-ok'; }
+      else if (cw > 0) { verdict = '写了读不到(疑会话打散)'; vb = 'badge-warn'; }
+      else { verdict = '后端未建缓存(疑渠道路由/不支持)'; vb = 'badge-err'; }
+      html += '<tr><td style="font-weight:600">' + m.model + '</td><td>' + cw.toLocaleString() + '</td><td>' + cr.toLocaleString() + '</td><td><span class="badge ' + vb + '">' + verdict + '</span></td></tr>';
+    });
+    html += '</table></div>';
   }
 
-  html += '<div class="section"><h2>⏱️ 延迟分布 (ms)</h2><table>';
+  html += '<div class="section"><h2>⏱️ 延迟分布 (s)</h2><table>';
   html += '<tr><th>指标</th><th>值</th></tr>';
-  html += '<tr><td>平均</td><td class="hl">' + Number(l.avg).toFixed(1) + '</td></tr>';
-  html += '<tr><td>最小</td><td>' + Number(l.min).toFixed(1) + '</td></tr>';
-  html += '<tr><td>最大</td><td>' + Number(l.max).toFixed(1) + '</td></tr>';
-  html += '<tr><td>P50</td><td>' + Number(l.p50).toFixed(1) + '</td></tr>';
-  html += '<tr><td>P90</td><td>' + Number(l.p90).toFixed(1) + '</td></tr>';
-  html += '<tr><td>P95</td><td class="hl">' + Number(l.p95).toFixed(1) + '</td></tr>';
-  html += '<tr><td>P99</td><td>' + Number(l.p99).toFixed(1) + '</td></tr>';
+  html += '<tr><td>平均</td><td class="hl">' + (Number(l.avg) / 1000).toFixed(3) + '</td></tr>';
+  html += '<tr><td>最小</td><td>' + (Number(l.min) / 1000).toFixed(3) + '</td></tr>';
+  html += '<tr><td>最大</td><td>' + (Number(l.max) / 1000).toFixed(3) + '</td></tr>';
+  html += '<tr><td>P50</td><td>' + (Number(l.p50) / 1000).toFixed(3) + '</td></tr>';
+  html += '<tr><td>P90</td><td>' + (Number(l.p90) / 1000).toFixed(3) + '</td></tr>';
+  html += '<tr><td>P95</td><td class="hl">' + (Number(l.p95) / 1000).toFixed(3) + '</td></tr>';
+  html += '<tr><td>P99</td><td>' + (Number(l.p99) / 1000).toFixed(3) + '</td></tr>';
   html += '</table></div>';
   html += '</div>';
 
@@ -856,9 +1570,51 @@ function downloadPDF() {
     var b = parseFloat(m.rate) >= 90 ? "badge-ok" : (parseFloat(m.rate) >= 50 ? "badge-warn" : "badge-err");
     html += '<tr><td style="font-weight:600">' + m.model + '</td><td>' + m.success + '</td><td>' + m.fail + '</td>';
     html += '<td><span class="badge ' + b + '">' + m.rate + '%</span></td>';
-    html += '<td>' + Number(m.avgLatency).toFixed(0) + 'ms</td><td>' + Number(m.p50).toFixed(0) + 'ms</td><td>' + Number(m.p90).toFixed(0) + 'ms</td><td>' + Number(m.p95).toFixed(0) + 'ms</td></tr>';
+    html += '<td>' + (Number(m.avgLatency) / 1000).toFixed(2) + 's</td><td>' + (Number(m.p50) / 1000).toFixed(2) + 's</td><td>' + (Number(m.p90) / 1000).toFixed(2) + 's</td><td>' + (Number(m.p95) / 1000).toFixed(2) + 's</td></tr>';
   });
   html += '</table></div>';
+
+  if (isImageReport && d.imageCaseStats) {
+    var pdfStatRows = function(title, map) {
+      var keys = Object.keys(map || {}).sort();
+      if (!keys.length) return "";
+      var total = keys.reduce(function(sum, key) { return sum + (Number(map[key]) || 0); }, 0) || 1;
+      var out = '<table><tr><th colspan="3" style="text-align:left">' + title + '</th></tr><tr><th>项目</th><th>数量</th><th>占比</th></tr>';
+      keys.forEach(function(key) {
+        var count = Number(map[key]) || 0;
+        out += '<tr><td>' + key + '</td><td>' + count + '</td><td>' + ((count / total) * 100).toFixed(1) + '%</td></tr>';
+      });
+      out += '</table>';
+      return out;
+    };
+    html += '<div class="section"><h2>🧩 混合生图分布</h2>';
+    html += pdfStatRows("工作类型", d.imageCaseStats.workload);
+    html += pdfStatRows("尺寸", d.imageCaseStats.size);
+    html += pdfStatRows("清晰度档位", d.imageCaseStats.quality);
+    html += '</div>';
+  }
+
+  if (d.sequence && d.sequence.enabled && d.modelRuns && d.modelRuns.length) {
+    html += '<div class="section"><h2>🧾 各模型独立结果</h2>';
+    d.modelRuns.forEach(function(run) {
+      var rs = run.summary || {}, rl = run.latency || {};
+      var runRate = parseFloat(String(rs.successRate || "0").replace("%",""));
+      var badge = runRate >= 90 ? "badge-ok" : (runRate >= 50 ? "badge-warn" : "badge-err");
+      html += '<div style="border:1px solid #e8e8ed;border-radius:10px;padding:10px 12px;margin-bottom:10px">';
+      html += '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px"><strong>#' + run.order + ' ' + run.model + '</strong><span style="color:#6e6e73">负载 ' + (rs.targetRpm ? (rs.targetRpm + ' rpm') : ('并发 ' + (rs.concurrency || d.config.concurrency))) + ' · 时长 ' + (rs.duration || "-") + '</span></div>';
+      html += '<div class="grid-4">';
+      html += '<div class="grid-item"><div class="val"><span class="badge ' + badge + '">' + (rs.successRate || "0%") + '</span></div><div class="lbl">成功率</div></div>';
+      html += '<div class="grid-item"><div class="val">' + fmtSec(rl.avg) + '</div><div class="lbl">平均</div></div>';
+      html += '<div class="grid-item"><div class="val">' + fmtSec(rl.p95) + '</div><div class="lbl">P95</div></div>';
+      html += '<div class="grid-item"><div class="val">' + (rs.actualRpm || rs.equivalentRpm || 0) + '</div><div class="lbl">' + (rs.targetRpm ? "实际RPM" : "等效RPM") + '</div></div>';
+      html += '</div>';
+      if (run.errorSummary && run.errorSummary.length) {
+        html += '<div style="font-size:10px;color:#6e6e73">主要错误：' + run.errorSummary.slice(0, 3).map(function(e) { return e.type + '×' + e.count; }).join('，') + '</div>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+  }
 
   if (d.errorSummary && d.errorSummary.length) {
     html += '<div class="section"><h2>❌ 错误分布</h2><table>';
@@ -866,8 +1622,34 @@ function downloadPDF() {
     d.errorSummary.slice(0,5).forEach(function(e) { html += '<tr><td>' + (e.type || "").slice(0, 80) + '</td><td>' + e.count + '</td></tr>'; });
     html += '</table></div>';
   }
+  html += renderErrorSamples(d.errorSamples, true);
 
-  html += '<div class="note">📝 <strong>综合评级: ' + grade + '</strong> — 成功率 ' + s.successRate + ' · 平均延迟 ' + Number(l.avg).toFixed(1) + 'ms · P95延迟 ' + Number(l.p95).toFixed(1) + 'ms · QPS ' + s.qps + ' · Cache ' + (s.cacheHitRate || "N/A") + '</div>';
+  if (showCompositeGrade) {
+    html += '<div class="section"><h2>🏁 综合评分</h2>';
+    html += '<div class="note"><strong>综合评分: ' + gradeInfo.score.toFixed(1) + '/100</strong><br>' + gradeInfo.reasons.join(' · ') + '</div>';
+    html += '</div>';
+  }
+
+  if (d.deliveryHint && d.deliveryHint.severity && d.deliveryHint.severity !== "none") {
+    var dh = d.deliveryHint;
+    html += '<div class="section"><h2>🩺 返回成功，但链路可能抖动</h2>';
+    html += '<div style="font-size:12px;color:#4a4a4a;line-height:1.7;margin-bottom:8px">' + (dh.note || "") + '</div>';
+    if (dh.signals && dh.signals.length) {
+      html += '<div style="font-size:11px;color:#6e6e73;margin-bottom:6px">命中信号：' + dh.signals.join('；') + '</div>';
+    }
+    html += '<div style="font-size:11px;color:#6e6e73;margin-bottom:6px">采样成功响应 ' + (dh.sampleCount || 0) + ' 条';
+    if (dh.samplesWithProcessingMs) html += ' · 带 processing_ms ' + dh.samplesWithProcessingMs + ' 条';
+    if (dh.samplesWithRetryHint) html += ' · 带 retry 标记 ' + dh.samplesWithRetryHint + ' 条';
+    if (dh.samplesWithUpstreamStatus) html += ' · 带 upstream status ' + dh.samplesWithUpstreamStatus + ' 条';
+    if (dh.samplesWithSlowGap) html += ' · 总耗时显著高于处理耗时 ' + dh.samplesWithSlowGap + ' 条';
+    html += '</div>';
+    if (dh.sampleRequestIds && dh.sampleRequestIds.length) {
+      html += '<div style="font-size:10px;color:#8e8e93">样例 request id：' + dh.sampleRequestIds.join('，') + '</div>';
+    }
+    html += '</div>';
+  }
+
+  html += '<div class="note">📝 ' + (showCompositeGrade ? ('<strong>综合评分: ' + gradeInfo.score.toFixed(1) + '/100</strong> — ') : '') + '成功率 ' + s.successRate + ' · 平均延迟 ' + (Number(l.avg) / 1000).toFixed(3) + 's · P95延迟 ' + (Number(l.p95) / 1000).toFixed(3) + 's · ' + (isImageReport ? '图/秒 ' : 'QPS ') + s.qps + (isImageReport ? '' : (' · Cache ' + (s.cacheHitDisplay || s.cacheHitRate || "N/A") + '（第2轮起）· 第1轮为创建缓存，不计入')) + '</div>';
   html += '<div class="footer">🦞 ' + title + ' · ' + new Date().toISOString() + '</div>';
   html += '</body></html>';
 
@@ -882,7 +1664,7 @@ applyConfig(getDraft());
 if (localStorage.getItem(STORAGE_KEY)) $("btnClearDraft").classList.remove("hidden");
 bindDraftPersistence();
 
-fetch("/api/snapshot").then(function(r) { return r.json(); }).then(function(s) {
+apiFetch("/api/snapshot").then(function(r) { return r.json(); }).then(function(s) {
   if (s.status === "running") {
     if (s.config) applyConfig(s.config);
     setRunningState(s.config, "恢复监控中...");

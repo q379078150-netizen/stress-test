@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: stress-test-worker
+  namespace: dev-4-lj
+spec:
+  clusterIP: None
+  selector:
+    app: stress-test-worker
+  ports:
+    - name: http
+      port: 3457
+      targetPort: 3457
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: stress-test-worker
+  namespace: dev-4-lj
+spec:
+  serviceName: stress-test-worker
+  replicas: 4
+  selector:
+    matchLabels:
+      app: stress-test-worker
+  template:
+    metadata:
+      labels:
+        app: stress-test-worker
+    spec:
+      containers:
+        - name: stress-test-worker
+          image: node:20-alpine
+          imagePullPolicy: IfNotPresent
+          workingDir: /app
+          command: ["node", "stress-test-server.js"]
+          ports:
+            - containerPort: 3457
+          env:
+            - name: WORKER_MODE
+              value: "1"
+            - name: WORKER_SHARED_TOKEN
+              value: "stress-worker-local"
+            - name: IMAGE_RPM_SAFE_MAX
+              value: "1000"
+            - name: IMAGE_RPM_DEFAULT_MAX_INFLIGHT
+              value: "800"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          volumeMounts:
+            - name: app-code
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: app-code
+          configMap:
+            name: stress-test-worker-code
+            items:
+              - key: stress-test-server.js
+                path: stress-test-server.js
