@@ -114,8 +114,14 @@ function loadConv(r) {
   html+='<div class="metrics">';
   html+='<div class="metric"><div class="val">'+s.totalDone+'</div><div class="lbl">总请求</div></div>';
   html+='<div class="metric"><div class="val val-ok">'+s.success+'</div><div class="lbl">成功</div></div>';
-  html+='<div class="metric"><div class="val val-warn">'+(s.cacheHitDisplay || s.cacheHitRate || "N/A")+'</div><div class="lbl">Cache 命中率（第2轮起）</div></div>';
+  html+='<div class="metric"><div class="val val-warn">'+(s.cacheHitDisplay || s.cacheHitRate || "N/A")+'</div><div class="lbl">Cache 命中率（第2轮起·按请求）</div></div>';
+  if(s.weightedCacheHitRate != null && s.weightedCacheHitRate !== "N/A"){
+    html+='<div class="metric"><div class="val">'+s.weightedCacheHitRate+'%</div><div class="lbl">加权命中率（按token量，对账上游）</div></div>';
+  }
   html+='</div>';
+  if(s.cacheVerdict){
+    html+='<p style="font-size:13px;margin-top:8px">命中判定：'+s.cacheVerdict+'</p>';
+  }
   if(r.perTurnCache && r.perTurnCache.length){
     html+='<p style="color:#6e7681;font-size:12px;margin-top:8px">第1轮用于创建缓存，不计入总命中率；主命中率从第2轮开始统计。</p>';
     html+='<table><tr><th>轮次</th><th>缓存命中</th><th>命中率</th></tr>';

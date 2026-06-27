@@ -4523,6 +4523,27 @@ class StressTestEngine {
     const warmedCacheRate = overallCacheRate;
     const warmedCacheHitDisplay = cacheHitDisplay;
 
+    // 加权命中率(token 口径,跟上游仪表盘同口径)= 命中读到的缓存 token ÷ 全部消耗的 input token。
+    // 分母含三块:cache_read(命中) + cache_creation(首次写,没命中) + 普通 input(新算,没命中)——
+    // 没命中但烧掉的 token 也老实算进分母,所以这个数反映"真实省了多少",可直接对账上游。
+    let totalNewInputTokens = 0;
+    for (const m of Object.keys(this.modelStats)) {
+      totalNewInputTokens += Number(this.modelStats[m].totalPromptTokens) || 0;
+    }
+    const weightedDenom = this.cacheReadTokens + this.cacheCreateTokens + totalNewInputTokens;
+    const weightedCacheRate = weightedDenom > 0 ? ((this.cacheReadTokens / weightedDenom) * 100).toFixed(1) : "N/A";
+    const contamination = this.turn1Contamination || 0;
+    // 好/差判定:基于加权命中率;串缓存(turn-1命中)高时加一句"可能含跨会话缓存"的提醒。
+    let cacheVerdict;
+    if (weightedDenom <= 0 || !cacheObserved) {
+      cacheVerdict = "未检测到缓存(create/read 均为 0)";
+    } else {
+      const r = Number(weightedCacheRate);
+      const base = r >= 60 ? "✅ 命中好" : (r >= 30 ? "⚠️ 一般" : "❌ 命中差");
+      cacheVerdict = base + "(加权 " + weightedCacheRate + "%)"
+        + (contamination > 0 ? ";⚠️含跨会话串缓存 " + contamination + " 次,数字偏乐观" : "");
+    }
+
     const modelReports = [];
     for (const [model, s] of Object.entries(this.modelStats)) {
       const sl = [...s.latencies].sort((a, b) => a - b);
@@ -4606,6 +4627,9 @@ class StressTestEngine {
         cacheHitDisplay: cacheHitDisplay,
         warmedCacheHitRate: warmedCacheRate,
         warmedCacheHitDisplay: warmedCacheHitDisplay,
+        // 加权命中率(token 口径,跟上游仪表盘同口径,看"命中好不好"主要看这个)+ 一句好/差判定
+        weightedCacheHitRate: weightedCacheRate,
+        cacheVerdict: cacheVerdict,
         cacheObserved: cacheObserved,
         cacheCreateTokens: this.cacheCreateTokens,
         cacheReadTokens: this.cacheReadTokens,
