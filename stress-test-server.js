@@ -114,7 +114,7 @@ function sanitizeConfig(config) {
     targetRpm: Number(config.targetRpm) || 0,
     maxInflight: Number(config.maxInflight) || 0,
     rpmCache: !!config.rpmCache,
-    rpmCacheTrafficMode: config.rpmCacheTrafficMode === "legacy" ? "legacy" : "realistic",
+    rpmCacheTrafficMode: config.rpmCacheTrafficMode === "realistic" ? "realistic" : "legacy",  // 默认 legacy:用户连续做完多轮,毫秒级交错,第2轮起命中(文档1713-1714原始正确设计)
     rpmMultiModelMode: config.rpmMultiModelMode === "mixed" ? "mixed" : "sequential",
     mode: config.mode || "",
     roundsPerSession: Number(config.roundsPerSession) || 0,
@@ -153,7 +153,7 @@ function normalizeConfig(config) {
     targetRpm: targetRpm,
     maxInflight: maxInflight,   // RPM 背压：在途上限，0=不限；图片 RPM 默认开启保护
     rpmCache: !!config.rpmCache,
-    rpmCacheTrafficMode: config.rpmCacheTrafficMode === "legacy" ? "legacy" : "realistic",
+    rpmCacheTrafficMode: config.rpmCacheTrafficMode === "realistic" ? "realistic" : "legacy",  // 默认 legacy:用户连续做完多轮,毫秒级交错,第2轮起命中(文档1713-1714原始正确设计)
     rpmMultiModelMode: config.rpmMultiModelMode === "mixed" ? "mixed" : "sequential",
     roundsPerSession: Math.max(1, Number(config.roundsPerSession) || 6),
     rpmCacheNewUserRatio: Math.max(0, Math.min(100, config.rpmCacheNewUserRatio != null ? Number(config.rpmCacheNewUserRatio) : RPM_CACHE_DEFAULT_NEW_USER_RATIO)),
