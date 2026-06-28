@@ -1463,6 +1463,36 @@ function percentile(sorted, ratio) {
   return sorted[Math.floor(sorted.length * ratio)] || 0;
 }
 
+function parseDurationMs(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, value);
+  const m = String(value || "").trim().match(/^([0-9]+(?:\.[0-9]+)?)s$/i);
+  return m ? Math.max(0, Math.round(Number(m[1]) * 1000)) : 0;
+}
+
+function resolveLaunchWindowMs(rawLaunchMs, configuredMs, launchCompletedNaturally) {
+  const rawMs = Math.max(0, Number(rawLaunchMs) || 0);
+  const plannedMs = Math.max(0, Number(configuredMs) || 0);
+  return launchCompletedNaturally ? Math.max(rawMs, plannedMs) : rawMs;
+}
+
+function orderedConfiguredModels(config, statsMap) {
+  const seen = new Set();
+  const ordered = [];
+  (config && Array.isArray(config.models) ? config.models : []).forEach(function(model) {
+    const key = String(model || "").trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    ordered.push(key);
+  });
+  Object.keys(statsMap || {}).forEach(function(model) {
+    const key = String(model || "").trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    ordered.push(key);
+  });
+  return ordered;
+}
+
 function mergeWorkerReports(config, reports, startedAt, endedAt, runId) {
   const elapsedMs = startedAt && endedAt ? Math.max(0, endedAt - startedAt) : 0;
   const elapsedSec = (elapsedMs / 1000).toFixed(2);
@@ -1534,7 +1564,7 @@ function mergeWorkerReports(config, reports, startedAt, endedAt, runId) {
       if (!modelMap[key]) {
         modelMap[key] = { model: key, success: 0, fail: 0, latencies: [],
           cacheHits: 0, cacheCreateTokens: 0, cacheReadTokens: 0,
-          promptTokenSum: 0, completionTokenSum: 0 };
+          promptTokenSum: 0, completionTokenSum: 0, turn1Count: 0 };
       }
       const ms = Number(m.success) || 0;
       modelMap[key].success += ms;
@@ -1545,6 +1575,7 @@ function mergeWorkerReports(config, reports, startedAt, endedAt, runId) {
       modelMap[key].cacheReadTokens += Number(m.cacheReadTokens) || 0;
       modelMap[key].promptTokenSum += (Number(m.avgPromptTokens) || 0) * ms;
       modelMap[key].completionTokenSum += (Number(m.avgCompletionTokens) || 0) * ms;
+      modelMap[key].turn1Count += Number(m.turn1Count) || 0;
       if (Array.isArray(m.latencySamples)) {
         m.latencySamples.forEach(function(v) {
           v = Number(v) || 0;
@@ -1565,18 +1596,36 @@ function mergeWorkerReports(config, reports, startedAt, endedAt, runId) {
   const avg = latencies.length ? Math.round(latencies.reduce(function(a, b) { return a + b; }, 0) / latencies.length * 100) / 100 : 0;
   const min = latencies[0] || 0;
   const max = latencies[latencies.length - 1] || 0;
-  const launchMs = Math.max(Number(config.durationSeconds || 0) * 1000, 1);
-  const actualRpm = Math.round((totals.totalSent / (launchMs / 1000)) * 60);
+  const workerLaunchMs = reports.map(function(report) {
+    return parseDurationMs(report && report.summary && report.summary.duration);
+  }).filter(function(ms) { return ms > 0; });
+  const launchMs = Math.max(workerLaunchMs.length ? Math.max.apply(null, workerLaunchMs) : 0, 1);
+  const actualRpm = reports.length
+    ? reports.reduce(function(sum, report) { return sum + (Number(report && report.summary && report.summary.actualRpm) || 0); }, 0)
+    : Math.round((totals.totalSent / (launchMs / 1000)) * 60);
   const successRate = totals.totalDone > 0 ? ((totals.success / totals.totalDone) * 100).toFixed(1) : "0";
-  const modelRows = Object.keys(modelMap).map(function(key) {
-    const m = modelMap[key];
+  const modelRows = orderedConfiguredModels(config, modelMap).map(function(key) {
+    const m = modelMap[key] || {
+      model: key,
+      success: 0,
+      fail: 0,
+      latencies: [],
+      cacheHits: 0,
+      cacheCreateTokens: 0,
+      cacheReadTokens: 0,
+      promptTokenSum: 0,
+      completionTokenSum: 0,
+      turn1Count: 0,
+    };
     const sl = m.latencies.sort(function(a, b) { return a - b; });
     const total = m.success + m.fail;
+    const mTurn1 = m.turn1Count || 0;
+    const mCacheDenom = total - mTurn1;
     return {
       model: m.model,
       success: m.success,
       fail: m.fail,
-      rate: total > 0 ? ((m.success / total) * 100).toFixed(1) : "0",
+      rate: total > 0 ? ((m.success / total) * 100).toFixed(1) : "0.0",
       avgLatency: sl.length ? Math.round(sl.reduce(function(a, b) { return a + b; }, 0) / sl.length * 100) / 100 : 0,
       avgTtfb: 0,
       p50: percentile(sl, 0.50),
@@ -1590,7 +1639,10 @@ function mergeWorkerReports(config, reports, startedAt, endedAt, runId) {
       avgCompletionTokens: m.success > 0 ? Math.round((m.completionTokenSum || 0) / m.success) : 0,
       cacheCreateTokens: m.cacheCreateTokens || 0,
       cacheReadTokens: m.cacheReadTokens || 0,
+      cacheHitRate: mCacheDenom > 0 ? ((m.cacheHits / mCacheDenom) * 100).toFixed(1) : "0.0",
+      cacheHitDisplay: mCacheDenom > 0 ? (m.cacheHits / mCacheDenom * 100).toFixed(1) + "%（请求级，第2轮起）" : "0.0%",
       rawUsageSample: [],
+      turn1Count: mTurn1,
     };
   });
 
@@ -1715,6 +1767,7 @@ class StressTestEngine {
     this.peakInflight = 0;  // RPM 开环模式：峰值在途并发（=真实洪峰打到服务端的并发）
     this.arrivals = 0;      // RPM 开环模式：已到达单元数（缓存模式=用户数，否则=请求数）
     this.launchEndTime = null;  // RPM 发射阶段结束时间
+    this.launchCompletedNaturally = false;
     this.cacheHits = 0;
     this.turn1Contamination = 0;  // turn-1 出现 cache_read>0 的次数 = 渠道跨会话串缓存信号(正常应为0)
     this.cacheCreateTokens = 0;   // 缓存写入 token 累计（第1轮 cache_creation_input_tokens）
@@ -2340,9 +2393,10 @@ class StressTestEngine {
     // 绝对时间锚点发射：第 n 个单元在 startTime + n*intervalMs 发射
     // 不被会话启动开销拖累，无累积漂移 → 速率精准稳定维持
     let fireIdx = 0;
+    let launchReachedDeadline = false;
     while (this.running) {
       const nextFireAt = this.startTime + fireIdx * intervalMs;
-      if (nextFireAt >= deadline) break;          // 60 秒后不再发新单元
+      if (nextFireAt >= deadline) { launchReachedDeadline = true; break; }          // 60 秒后不再发新单元
       const wait = nextFireAt - Date.now();
       if (wait > 0) {
         await new Promise(function(r) { setTimeout(r, wait); });
@@ -2354,7 +2408,8 @@ class StressTestEngine {
         while (this.inflight >= maxInflight && this.running && Date.now() < deadline) {
           await new Promise(function(r) { setTimeout(r, 50); });
         }
-        if (!this.running || Date.now() >= deadline) break;
+        if (!this.running) break;
+        if (Date.now() >= deadline) { launchReachedDeadline = true; break; }
       }
       // 若已落后（系统卡顿），补发追平节拍，保证维持目标 RPM
       fireOne();
@@ -2362,6 +2417,7 @@ class StressTestEngine {
     }
     // 发射阶段结束时间（用于精准计算达成速率，不被收尾时间稀释）
     this.launchEndTime = Date.now();
+    this.launchCompletedNaturally = launchReachedDeadline && !this.stopRequested;
 
     // 收尾（drain）：不再发射新请求，但等所有已发出的在途请求自然跑完，
     // 不主动 abort —— 让每个请求都拿到 success/fail 结果，保证 总数 = 成功 + 失败 闭合。
@@ -2437,6 +2493,7 @@ class StressTestEngine {
       const cacheHeaders = this._buildAnthropicCacheHeaders(baseUrl, user.model, apiKey, {
         "User-Agent": user.identity.ua,
         "X-Client-Id": user.identity.clientId,
+        "X-Claude-Code-Session-Id": makeDeterministicUuid(user.sessionId),
       });
 
       // ctrl/t 提升到 try 外：内层 catch 要引用 ctrl，若用 const 声明在 try 内则 catch 里 ctrl 越界 → ReferenceError 崩进程
@@ -2537,7 +2594,7 @@ class StressTestEngine {
           return this._continueUserAfterFailedTurn(user);
         }
       } catch (e) {
-        if (!this.running || this.stopRequested) { this.totalDone++; return false; }
+        if (!this.running || this.stopRequested) { return false; }
         this.fail++; this.totalDone++;
         this.allLatencies.push(Date.now() - start);
         this.errors.push({ model: user.model, sessionId: user.sessionId, turn: turnNum, error: describeAbortError(e, ctrl, this.running, this.stopRequested), time: Date.now() });
@@ -2688,7 +2745,7 @@ class StressTestEngine {
         this._ensureModelStat(user.model);
         return this._continueUserAfterFailedTurn(user);
       } catch (e) {
-        if (!this.running || this.stopRequested) { this.totalDone++; return false; }
+        if (!this.running || this.stopRequested) { return false; }
         this.fail++; this.totalDone++;
         this.allLatencies.push(Date.now() - start);
         this.errors.push({ model: user.model, sessionId: user.sessionId, turn: turnNum, error: describeAbortError(e, ctrl, this.running, this.stopRequested), time: Date.now() });
@@ -2835,7 +2892,7 @@ class StressTestEngine {
           continue;
         }
       } catch (e) {
-        if (!this.running || this.stopRequested) { this.totalDone++; sessionOk = false; break; }
+        if (!this.running || this.stopRequested) { sessionOk = false; break; }
         this.fail++;
         this.totalDone++;
         this.allLatencies.push(Date.now() - start);
@@ -2861,6 +2918,7 @@ class StressTestEngine {
       const cacheHeaders = this._buildAnthropicCacheHeaders(baseUrl, session.model, apiKey, {
         "User-Agent": session.identity.ua,
         "X-Client-Id": session.identity.clientId,
+        "X-Claude-Code-Session-Id": makeDeterministicUuid(session.sessionId),
       });
       const msgs = [];
       let turnNum = 0;
@@ -2969,7 +3027,7 @@ class StressTestEngine {
             continue;
           }
         } catch (e) {
-          if (!this.running || this.stopRequested) { this.totalDone++; sessionOk = false; break; }
+          if (!this.running || this.stopRequested) { sessionOk = false; break; }
           this.fail++; this.totalDone++;
           this.allLatencies.push(Date.now() - start);
           this.errors.push({ model: session.model, sessionId: session.sessionId, turn: turnNum, error: describeAbortError(e, ctrl, this.running, this.stopRequested), time: Date.now() });
@@ -2987,13 +3045,14 @@ class StressTestEngine {
   // 确保某模型的 fail 计数存在（错误路径用）
   _ensureModelStat(model) {
     if (!this.modelStats[model]) {
-      this.modelStats[model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {} };
+      this.modelStats[model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {}, cacheCreateTokens: 0, cacheReadTokens: 0 };
     } else {
       this.modelStats[model].fail++;
     }
   }
 
   _continueUserAfterFailedTurn(user) {
+    if (user.msgs && user.msgs.length > 0) user.msgs.pop();
     user.turnNum++;
     user.hadFailure = true;
     if (user.turnNum >= user.turns.length) {
@@ -3582,7 +3641,7 @@ class StressTestEngine {
         this.allLatencies.push(Date.now() - start);
         this.errors.push({ model: model, turn: 1, error: errMsg, status: res.status, time: Date.now() });
         if (!this.modelStats[model]) {
-          this.modelStats[model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {} };
+          this.modelStats[model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {}, cacheCreateTokens: 0, cacheReadTokens: 0 };
         } else { this.modelStats[model].fail++; }
         return;
       }
@@ -3616,17 +3675,17 @@ class StressTestEngine {
       } else {
         this.fail++;
         if (!this.modelStats[model]) {
-          this.modelStats[model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {} };
+          this.modelStats[model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {}, cacheCreateTokens: 0, cacheReadTokens: 0 };
         } else { this.modelStats[model].fail++; }
       }
     } catch (e) {
-      if (!this.running || this.stopRequested) { this.totalDone++; return; }
+      if (!this.running || this.stopRequested) { return; }
       this.fail++;
       this.totalDone++;
       this.allLatencies.push(Date.now() - start);
       this.errors.push({ model: model, turn: 1, error: describeAbortError(e, ctrl, this.running, this.stopRequested), time: Date.now() });
       if (!this.modelStats[model]) {
-        this.modelStats[model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {} };
+        this.modelStats[model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {}, cacheCreateTokens: 0, cacheReadTokens: 0 };
       } else { this.modelStats[model].fail++; }
     } finally {
       this.inflight--;
@@ -3900,7 +3959,7 @@ class StressTestEngine {
         this.errors.push(Object.assign({ model: model, turn: 1, error: "空响应", status: 200, time: Date.now() }, caseMeta()));
       }
     } catch (e) {
-      if (!this.running || this.stopRequested) { this.totalDone++; return; }
+      if (!this.running || this.stopRequested) { return; }
       this.fail++;
       this.totalDone++;
       this.allLatencies.push(Date.now() - start);
@@ -3990,7 +4049,7 @@ class StressTestEngine {
             this.totalDone++;
             this.errors.push({ model: session.model, turn: 1, error: errMsg, status: res.status, time: Date.now() });
             if (!this.modelStats[session.model]) {
-              this.modelStats[session.model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {} };
+              this.modelStats[session.model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {}, cacheCreateTokens: 0, cacheReadTokens: 0 };
             } else { this.modelStats[session.model].fail++; }
             this.allLatencies.push(Date.now() - start);
             continue;
@@ -4028,21 +4087,20 @@ class StressTestEngine {
           } else {
             this.fail++;
             if (!this.modelStats[session.model]) {
-              this.modelStats[session.model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {} };
+              this.modelStats[session.model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {}, cacheCreateTokens: 0, cacheReadTokens: 0 };
             } else { this.modelStats[session.model].fail++; }
           }
         } catch (e) {
           const latency = Date.now() - start;
           // 如果是主动中止，不记录失败
           if (!this.running || this.stopRequested) {
-            this.totalDone++;
             break;
           }
           this.fail++;
           this.totalDone++;
           this.allLatencies.push(latency);
           if (!this.modelStats[session.model]) {
-            this.modelStats[session.model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {} };
+            this.modelStats[session.model] = { success: 0, fail: 1, latencies: [], ttfbList: [], cacheHits: 0, totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {}, cacheCreateTokens: 0, cacheReadTokens: 0 };
           } else { this.modelStats[session.model].fail++; }
         }
         continue;
@@ -4060,6 +4118,7 @@ class StressTestEngine {
       const cacheHeaders = this._buildAnthropicCacheHeaders(baseUrl, session.model, apiKey, {
         "User-Agent": (session.identity && session.identity.ua) || "stress-test/1.0",
         "X-Client-Id": (session.identity && session.identity.clientId) || session.sessionId,
+        "X-Claude-Code-Session-Id": makeDeterministicUuid(session.sessionId || session.cacheBreak || "CB-" + session.sessionId),
       });
       let msgs = [];
       let turnNum = 0;
@@ -4134,6 +4193,7 @@ class StressTestEngine {
               this.modelStats[session.model] = {
                 success: 0, fail: 1, latencies: [], cacheHits: 0, ttfbList: [],
                 totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {},
+                cacheCreateTokens: 0, cacheReadTokens: 0,
               };
             } else {
               this.modelStats[session.model].fail++;
@@ -4196,6 +4256,7 @@ class StressTestEngine {
                   this.modelStats[session.model] = {
                     success: 0, fail: 1, latencies: [], cacheHits: 0, ttfbList: [],
                     totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {},
+                    cacheCreateTokens: 0, cacheReadTokens: 0,
                   };
                 } else {
                   this.modelStats[session.model].fail++;
@@ -4205,6 +4266,10 @@ class StressTestEngine {
               }
         } catch (e) {
           const latency = Date.now() - start;
+          if (!this.running || this.stopRequested) {
+            sessionOk = false;
+            break;
+          }
           const errMsg = describeAbortError(e, ctrl, this.running, this.stopRequested);
           this.fail++;
           this.allLatencies.push(latency);
@@ -4218,6 +4283,7 @@ class StressTestEngine {
             this.modelStats[session.model] = {
               success: 0, fail: 1, latencies: [], cacheHits: 0,
               totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {},
+              cacheCreateTokens: 0, cacheReadTokens: 0,
             };
           } else {
             this.modelStats[session.model].fail++;
@@ -4301,6 +4367,7 @@ class StressTestEngine {
       this.modelStats[session.model] = {
         success: 0, fail: 0, latencies: [], ttfbList: [], cacheHits: 0,
         totalPromptTokens: 0, totalCompletionTokens: 0, turnLatencies: {},
+        cacheCreateTokens: 0, cacheReadTokens: 0, turn1Count: 0,
       };
     }
     const ms = this.modelStats[session.model];
@@ -4308,6 +4375,7 @@ class StressTestEngine {
     ms.latencies.push(latency);
     ms.ttfbList.push(ttfbs);
     if (countedHit) ms.cacheHits++;   // 同口径：turn-1 不计命中
+    if (turnNum === 1) ms.turn1Count = (ms.turn1Count || 0) + 1;
     ms.totalPromptTokens += promptTokens;
     ms.totalCompletionTokens += completionTokens;
     ms.cacheCreateTokens = (ms.cacheCreateTokens || 0) + cacheCreate;
@@ -4347,7 +4415,9 @@ class StressTestEngine {
       latencies.sort(function(a, b) { return a - b; });
       const effectiveEnd = Date.now();
       const elapsedMs = this.startTime ? Math.max(0, effectiveEnd - this.startTime) : 0;
-      const launchMs = Math.max((Number(this.config.durationSeconds) || 0) * 1000, 1);
+      const distributedActualRpm = this._workerJob.workers.reduce(function(sum, worker) {
+        return sum + (Number(worker && worker.snapshot && worker.snapshot.actualRpm) || 0);
+      }, 0);
       return {
         status: "running",
         runId: this.runId,
@@ -4364,7 +4434,7 @@ class StressTestEngine {
         rateLimited: totals.rateLimited,
         cacheHits: 0,
         qps: elapsedMs > 0 ? (totals.totalDone / (elapsedMs / 1000)).toFixed(2) : "0",
-        actualRpm: Math.round((totals.totalSent / (launchMs / 1000)) * 60),
+        actualRpm: distributedActualRpm,
         arrivals: totals.totalSent,
         equivalentRpm: 0,
         targetRpm: this.config.targetRpm || 0,
@@ -4426,7 +4496,9 @@ class StressTestEngine {
     // 运行中用真实流逝时间；发射已结束(launchEndTime 存在)时用「实际/设定」较大者兜底，防止早退导致 RPM 爆表。
     const rawLaunchMs = this.startTime ? ((this.launchEndTime || Date.now()) - this.startTime) : 0;
     const configuredMs = (Number(this.config.durationSeconds) || 0) * 1000;
-    const launchMs = (isRpmMode && this.launchEndTime) ? Math.max(rawLaunchMs, configuredMs) : rawLaunchMs;
+    const launchMs = (isRpmMode && this.launchEndTime)
+      ? resolveLaunchWindowMs(rawLaunchMs, configuredMs, this.launchCompletedNaturally)
+      : rawLaunchMs;
     const actualRpm = isRpmMode
       ? (launchMs > 0 ? Math.round((this.totalSent / (launchMs / 1000)) * 60) : 0)
       : (elapsedMs > 0 ? Math.round((this.totalSent / (elapsedMs / 1000)) * 60) : 0);
@@ -4465,8 +4537,8 @@ class StressTestEngine {
         reportsReady: (this._sequenceReports || []).length,
       }) : null,
       multiModelMixed: this.config && this.config.mode === "rpm" && this.config.rpmMultiModelMode === "mixed" && (this.config.models || []).length > 1,
-      modelLive: Object.entries(this.modelStats).map(function(entry) {
-        const m = entry[0], s = entry[1];
+      modelLive: orderedConfiguredModels(this.config, this.modelStats).map(function(m) {
+        const s = this.modelStats[m] || {};
         const done = (s.success || 0) + (s.fail || 0);
         return {
           model: m,
@@ -4477,7 +4549,7 @@ class StressTestEngine {
             ? Math.round(s.latencies.reduce(function(a, b) { return a + b; }, 0) / s.latencies.length / 10) / 100
             : 0,
         };
-      }),
+      }, this),
     };
   }
 
@@ -4545,14 +4617,28 @@ class StressTestEngine {
     }
 
     const modelReports = [];
-    for (const [model, s] of Object.entries(this.modelStats)) {
+    for (const model of orderedConfiguredModels(this.config, this.modelStats)) {
+      const s = this.modelStats[model] || {
+        success: 0,
+        fail: 0,
+        latencies: [],
+        ttfbList: [],
+        cacheHits: 0,
+        totalPromptTokens: 0,
+        totalCompletionTokens: 0,
+        cacheCreateTokens: 0,
+        cacheReadTokens: 0,
+        turn1Count: 0,
+      };
       const sl = [...s.latencies].sort((a, b) => a - b);
       const modelTotal = s.success + s.fail;
+      const modelTurn1 = s.turn1Count || 0;
+      const modelCacheDenom = modelTotal - modelTurn1;  // 排除 turn1，与汇总口径一致
       modelReports.push({
         model,
         success: s.success,
         fail: s.fail,
-        rate: ((s.success / modelTotal) * 100).toFixed(1),
+        rate: modelTotal > 0 ? ((s.success / modelTotal) * 100).toFixed(1) : "0.0",
         avgLatency: s.success > 0 ? Math.round(s.latencies.reduce((a, b) => a + b, 0) / s.latencies.length * 100) / 100 : 0,
         avgTtfb: s.ttfbList && s.ttfbList.length > 0 ? Math.round(s.ttfbList.reduce((a, b) => a + b, 0) / s.ttfbList.length * 100) / 100 : 0,
         p50: sl[Math.floor(sl.length * 0.5)] || 0,
@@ -4567,10 +4653,19 @@ class StressTestEngine {
         avgCompletionTokens: s.success > 0 ? Math.round(s.totalCompletionTokens / s.success) : 0,
         cacheCreateTokens: s.cacheCreateTokens || 0,
         cacheReadTokens: s.cacheReadTokens || 0,
+        cacheHitRate: modelCacheDenom > 0 ? ((s.cacheHits / modelCacheDenom) * 100).toFixed(1) : "0.0",
+        cacheHitDisplay: modelCacheDenom > 0 ? (s.cacheHits / modelCacheDenom * 100).toFixed(1) + "%（请求级，第2轮起）" : "0.0%",
         rawUsageSample: (this._rawUsageSample && this._rawUsageSample[model]) || [],
+        turn1Count: modelTurn1,
       });
     }
-    modelReports.sort((a, b) => a.avgLatency - b.avgLatency);
+    modelReports.sort((a, b) => {
+      const aDone = (a.success || 0) + (a.fail || 0);
+      const bDone = (b.success || 0) + (b.fail || 0);
+      if (!aDone && bDone) return 1;
+      if (aDone && !bDone) return -1;
+      return a.avgLatency - b.avgLatency;
+    });
 
     const errorTypes = {};
     for (const e of this.errors) {
@@ -4587,7 +4682,9 @@ class StressTestEngine {
     // RPM 发射本就按 durationSeconds 铺开节拍，正常跑完两者相等；异常早退时用设定时长才是真实速率。
     const rawLaunchMs = this.startTime ? ((this.launchEndTime || Date.now()) - this.startTime) : 0;
     const configuredMs = (Number(this.config.durationSeconds) || 0) * 1000;
-    const launchMs = (isRpmMode && this.launchEndTime) ? Math.max(rawLaunchMs, configuredMs) : rawLaunchMs;
+    const launchMs = (isRpmMode && this.launchEndTime)
+      ? resolveLaunchWindowMs(rawLaunchMs, configuredMs, this.launchCompletedNaturally)
+      : rawLaunchMs;
     const actualRpm = isRpmMode
       ? (launchMs > 0 ? Math.round((this.totalSent / (launchMs / 1000)) * 60) : 0)
       : (elapsedMs > 0 ? Math.round((this.totalSent / (elapsedMs / 1000)) * 60) : 0);

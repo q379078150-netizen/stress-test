@@ -8,6 +8,7 @@ logs/
 *-report-*.html
 stress-*.json
 report-*.json
+backups/
 
 # ===== 接力文档（含真实渠道信息，不上传）=====
 压力测试接力文档.md

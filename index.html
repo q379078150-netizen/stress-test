@@ -150,6 +150,7 @@ h1 .icon { font-size: 24px; }
 .badge-ok { background: #238636; color: #fff; }
 .badge-warn { background: #9e6a03; color: #fff; }
 .badge-err { background: #da3633; color: #fff; }
+.badge-na { background: #30363d; color: #c9d1d9; }
 .hidden { display: none !important; }
 </style>
 </head>
@@ -188,7 +189,7 @@ h1 .icon { font-size: 24px; }
     </div>
     <div style="margin-top:8px">
       <label style="font-size:11px;color:#484f58">手动输入（逗号分隔，仅在未勾选任何模型时生效）</label>
-      <input id="modelsManual" style="width:100%;margin-top:4px;font-size:12px;padding:6px 10px;background:#0d1117;border:1px solid #21262d;border-radius:4px;color:#6e7681" placeholder="勾选模型优先；都没勾选时才用这里">
+      <input id="modelsManual" style="width:100%;margin-top:4px;font-size:12px;padding:6px 10px;background:#0d1117;border:1px solid #21262d;border-radius:4px;color:#6e7681" placeholder="勾选模型优先；都没勾选时才用这里" oninput="updateRpmEstimate();saveDraft()">
     </div>
   </div>
 
@@ -230,7 +231,7 @@ h1 .icon { font-size: 24px; }
   <!-- 多模型方式：选了 ≥2 个模型时出现（仅 RPM 开环）。顺序=一个个单独跑；混合=随机混着跑一份合并报告 -->
   <div class="form-group" id="rpmMultiModelGroup" style="display:none;margin-top:12px">
     <label>多模型方式（已选 <span id="rpmMultiModelCount">0</span> 个模型）</label>
-    <select id="rpmMultiModelMode" onchange="saveDraft()">
+    <select id="rpmMultiModelMode" onchange="updateRpmEstimate();saveDraft()">
       <option value="sequential" selected>顺序排队 — 一个模型跑完再跑下一个（默认）</option>
       <option value="mixed">随机混合 — 多模型混着跑一份报告（均匀轮流，各模型等量）</option>
     </select>
@@ -771,9 +772,18 @@ function checkedCount() {
   return document.querySelectorAll("#modelList input[type=checkbox]:checked").length;
 }
 
+function estimateModelCount() {
+  var selected = getSelectedModels();
+  if (selected.length) return selected.length;
+  var manual = $("modelsManual").value.trim();
+  if (!manual) return 0;
+  return manual.split(",").map(function(s) { return s.trim(); }).filter(Boolean).length;
+}
+
 function updateCount() {
   $("modelCount").textContent = "已选 " + checkedCount() + " / " + _allModels.length;
   refreshMultiModelOption();
+  updateRpmEstimate();
   saveDraft();
 }
 
@@ -870,6 +880,14 @@ function updateRpmEstimate() {
     var rounds = parseInt($("rounds").value) || 1;
     var users = rounds > 0 ? Math.max(1, Math.round(totalReq / rounds)) : totalReq;
     html += "，约 <b>" + users.toLocaleString() + "</b> 个用户 × " + rounds + " 轮";
+    var modelCount = estimateModelCount();
+    var multiMixed = modelCount > 1 && $("rpmMultiModelMode") && $("rpmMultiModelMode").value === "mixed";
+    if (multiMixed) {
+      var fullSessions = rounds > 0 ? Math.floor(totalReq / rounds) : totalReq;
+      if (fullSessions < modelCount) {
+        html += ' <span style="color:#d2991d">⚠ 当前只够约 <b>' + fullSessions.toLocaleString() + '</b> 个完整会话，缓存混合是“每个会话固定一个模型”，本轮可能只覆盖到部分模型。</span>';
+      }
+    }
   }
   box.innerHTML = html;
 }
@@ -1257,25 +1275,39 @@ function showReport() {
       h += '<div class="section-title">🔬 缓存 Token 明细（诊断 0 命中用）</div>';
       h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>模型</th><th>写入(creation)</th><th>读取(read)</th><th>判定</th></tr></thead><tbody>';
       (d.models || []).forEach(function(m) {
+        var total = (Number(m.success) || 0) + (Number(m.fail) || 0);
         var cw = Number(m.cacheCreateTokens || 0);
         var cr = Number(m.cacheReadTokens || 0);
         var verdict, vb;
-        if (cr > 0) { verdict = '正常命中'; vb = 'ok'; }
+        if (total <= 0) { verdict = '本轮未分配到请求'; vb = 'na'; }
+        else if (cr > 0) { verdict = '正常命中'; vb = 'ok'; }
         else if (cw > 0) { verdict = '写了读不到（疑会话被打散到多上游）'; vb = 'warn'; }
         else { verdict = '后端未建缓存（疑渠道路由/该后端不支持 cache）'; vb = 'err'; }
         h += '<tr><td>' + m.model + '</td><td>' + cw.toLocaleString() + '</td><td>' + cr.toLocaleString() + '</td><td><span class="badge badge-' + vb + '">' + verdict + '</span></td></tr>';
       });
       h += '</tbody></table></div>';
-      h += '<div style="font-size:11px;color:#6e7681;margin-top:6px;line-height:1.6">写入=0 且 读取=0 → 该模型在这条渠道上压根没建缓存，基本是渠道把它路由到了不支持/不粘的后端，工具改不了，拿 request_id 找渠道。写入&gt;0 但读取=0 → 缓存写了却读不到，是会话被打散（写在节点A、读到节点B）。</div>';
+      h += '<div style="font-size:11px;color:#6e7681;margin-top:6px;line-height:1.6">成功+失败都为 0 → 只是本轮没分到流量。写入=0 且 读取=0 → 该模型在这条渠道上压根没建缓存，基本是渠道把它路由到了不支持/不粘的后端，工具改不了，拿 request_id 找渠道。写入&gt;0 但读取=0 → 缓存写了却读不到，是会话被打散（写在节点A、读到节点B）。</div>';
     }
 
     h += '<div class="section-title">🤖 各模型表现</div>';
-    h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>模型</th><th>成功</th><th>失败</th><th>成功率</th><th>TTFB</th><th>平均</th><th>P50</th><th>P90</th><th>P95</th><th>P99</th></tr></thead><tbody>';
+    var isCacheMode = d.config && d.config.rpmCache;
+    h += '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>模型</th><th>成功</th><th>失败</th><th>成功率</th>' + (isCacheMode ? '<th>缓存命中</th><th>命中率</th>' : '') + '<th>TTFB</th><th>平均</th><th>P50</th><th>P90</th><th>P95</th><th>P99</th></tr></thead><tbody>';
     d.models.forEach(function(m) {
+      var total = (Number(m.success) || 0) + (Number(m.fail) || 0);
+      if (total <= 0) {
+        h += '<tr><td>' + m.model + '</td><td>0</td><td>0</td><td><span class="badge badge-na">未分配流量</span></td>' + (isCacheMode ? '<td>-</td><td>-</td>' : '') + '<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>';
+        return;
+      }
       var b = parseFloat(m.rate) >= 90 ? "ok" : (parseFloat(m.rate) >= 50 ? "warn" : "err");
       function ms2s(v) { return (Number(v)/1000).toFixed(2) + 's'; }
       h += '<tr><td>' + m.model + '</td><td>' + m.success + '</td><td>' + m.fail + '</td>';
       h += '<td><span class="badge badge-' + b + '">' + m.rate + '%</span></td>';
+      if (isCacheMode) {
+        var mch = Number(m.cacheHits) || 0;
+        var mcr = String(m.cacheHitRate || "N/A") === "N/A" ? "N/A" : (parseFloat(m.cacheHitRate) || 0).toFixed(1) + "%";
+        var mcb = parseFloat(m.cacheHitRate) >= 80 ? "ok" : (parseFloat(m.cacheHitRate) >= 40 ? "warn" : "err");
+        h += '<td>' + mch + '</td><td><span class="badge badge-' + mcb + '">' + mcr + '</span></td>';
+      }
       h += '<td>' + (m.avgTtfb ? ms2s(m.avgTtfb) : '-') + '</td>';
       h += '<td>' + ms2s(m.avgLatency) + '</td><td>' + ms2s(m.p50) + '</td><td>' + ms2s(m.p90) + '</td>';
       h += '<td>' + ms2s(m.p95) + '</td><td>' + ms2s(m.p99) + '</td></tr>';
@@ -1375,7 +1407,14 @@ function copyText() {
   if (showCompositeGrade) {
     lines.splice(2, 0, "", "综合评分: " + gradeInfo.score.toFixed(1) + "/100", "评分说明: " + gradeInfo.reasons.join("；"));
   }
-  d.models.forEach(function(m) { lines.push("  " + m.model + ": " + m.rate + "% 平均" + (Number(m.avgLatency) / 1000).toFixed(2) + "s P95=" + (Number(m.p95) / 1000).toFixed(2) + "s"); });
+  (d.models || []).forEach(function(m) {
+    var total = (Number(m.success) || 0) + (Number(m.fail) || 0);
+    if (total <= 0) {
+      lines.push("  " + m.model + ": 未分配到请求");
+      return;
+    }
+    lines.push("  " + m.model + ": " + m.rate + "% 平均" + (Number(m.avgLatency) / 1000).toFixed(2) + "s P95=" + (Number(m.p95) / 1000).toFixed(2) + "s" + (d.config && d.config.rpmCache ? ("  缓存命中" + (m.cacheHits || 0) + "  命中率" + (m.cacheHitRate || "N/A")) : ""));
+  });
   if (d.sequence && d.sequence.enabled && d.modelRuns && d.modelRuns.length) {
     lines.push("");
     lines.push("顺序测试队列:");
@@ -1524,10 +1563,12 @@ function downloadPDF() {
     html += '<div class="section"><h2>🔬 缓存 Token 明细（诊断 0 命中）</h2><table>';
     html += '<tr><th>模型</th><th>写入(creation)</th><th>读取(read)</th><th>判定</th></tr>';
     (d.models || []).forEach(function(m) {
+      var total = (Number(m.success) || 0) + (Number(m.fail) || 0);
       var cw = Number(m.cacheCreateTokens || 0);
       var cr = Number(m.cacheReadTokens || 0);
       var verdict, vb;
-      if (cr > 0) { verdict = '正常命中'; vb = 'badge-ok'; }
+      if (total <= 0) { verdict = '本轮未分配到请求'; vb = 'badge-na'; }
+      else if (cr > 0) { verdict = '正常命中'; vb = 'badge-ok'; }
       else if (cw > 0) { verdict = '写了读不到(疑会话打散)'; vb = 'badge-warn'; }
       else { verdict = '后端未建缓存(疑渠道路由/不支持)'; vb = 'badge-err'; }
       html += '<tr><td style="font-weight:600">' + m.model + '</td><td>' + cw.toLocaleString() + '</td><td>' + cr.toLocaleString() + '</td><td><span class="badge ' + vb + '">' + verdict + '</span></td></tr>';
@@ -1548,11 +1589,22 @@ function downloadPDF() {
   html += '</div>';
 
   html += '<div class="section"><h2>🤖 各模型表现</h2><table>';
-  html += '<tr><th>模型</th><th>成功</th><th>失败</th><th>成功率</th><th>平均</th><th>P50</th><th>P90</th><th>P95</th></tr>';
+  html += '<tr><th>模型</th><th>成功</th><th>失败</th><th>成功率</th>' + (d.config && d.config.rpmCache ? '<th>缓存命中</th><th>命中率</th>' : '') + '<th>平均</th><th>P50</th><th>P90</th><th>P95</th></tr>';
   d.models.forEach(function(m) {
+    var total = (Number(m.success) || 0) + (Number(m.fail) || 0);
+    if (total <= 0) {
+      html += '<tr><td style="font-weight:600">' + m.model + '</td><td>0</td><td>0</td><td><span class="badge badge-na">未分配流量</span></td>' + (d.config && d.config.rpmCache ? '<td>-</td><td>-</td>' : '') + '<td>-</td><td>-</td><td>-</td><td>-</td></tr>';
+      return;
+    }
     var b = parseFloat(m.rate) >= 90 ? "badge-ok" : (parseFloat(m.rate) >= 50 ? "badge-warn" : "badge-err");
     html += '<tr><td style="font-weight:600">' + m.model + '</td><td>' + m.success + '</td><td>' + m.fail + '</td>';
     html += '<td><span class="badge ' + b + '">' + m.rate + '%</span></td>';
+    if (d.config && d.config.rpmCache) {
+      var mch2 = Number(m.cacheHits) || 0;
+      var mcr2 = String(m.cacheHitRate || "N/A") === "N/A" ? "N/A" : (parseFloat(m.cacheHitRate) || 0).toFixed(1) + "%";
+      var mcb2 = parseFloat(m.cacheHitRate) >= 80 ? "badge-ok" : (parseFloat(m.cacheHitRate) >= 40 ? "badge-warn" : "badge-err");
+      html += '<td>' + mch2 + '</td><td><span class="badge ' + mcb2 + '">' + mcr2 + '</span></td>';
+    }
     html += '<td>' + (Number(m.avgLatency) / 1000).toFixed(2) + 's</td><td>' + (Number(m.p50) / 1000).toFixed(2) + 's</td><td>' + (Number(m.p90) / 1000).toFixed(2) + 's</td><td>' + (Number(m.p95) / 1000).toFixed(2) + 's</td></tr>';
   });
   html += '</table></div>';
